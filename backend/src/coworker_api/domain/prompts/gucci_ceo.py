@@ -1,0 +1,1 @@
+# Gucci CEO prompt templates
