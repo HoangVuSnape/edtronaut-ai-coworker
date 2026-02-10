@@ -1,0 +1,73 @@
+/* ================================================================== */
+/*  Global reset & design tokens                                      */
+/* ================================================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  /* Palette – Gucci-inspired dark/gold theme */
+  --color-bg: #0e0f14;
+  --color-surface: #16171e;
+  --color-surface-raised: #1e2028;
+  --color-border: #2a2c37;
+  --color-text: #e8e8ec;
+  --color-text-muted: #8b8d9a;
+  --color-accent: #c9a84c;          /* Gucci gold */
+  --color-accent-glow: rgba(201, 168, 76, 0.15);
+
+  /* NPC colors */
+  --color-ceo: #6e8efb;
+  --color-chro: #a777e3;
+  --color-ebic: #56c99d;
+
+  /* User bubble */
+  --color-user-bg: #2a3a5c;
+  --color-user-text: #d6e4ff;
+
+  /* Misc */
+  --radius: 12px;
+  --radius-sm: 8px;
+  --shadow-card: 0 2px 12px rgba(0, 0, 0, 0.35);
+  --transition: 0.2s ease;
+
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+
+body {
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+#root {
+  height: 100vh;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+input {
+  font-family: inherit;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--color-text-muted); }

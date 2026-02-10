@@ -1,3 +1,10 @@
+# Edtronaut AI Coworker
+
+## Architecture
+
+This project follows a Clean Architecture design, maintaining a clear separation of concerns between the Domain, Application, and Infrastructure layers.
+
+```text
 edtronaut-ai-coworker/
 ├── backend/
 │   ├── src/
@@ -105,6 +112,21 @@ edtronaut-ai-coworker/
 ├── docs/
 ├── notebooks/
 ├── .github/
-├── CLAUDE.md
 ├── README.md
 └── pyproject.toml
+```
+
+## Description
+
+**Edtronaut AI Coworker** is an advanced interactive simulation platform designed to provide realistic workplace scenarios. By leveraging state-of-the-art Large Language Models (LLMs), the system creates intelligent "coworkers" with distinct personas—such as a Gucci CEO, CHRO, or Investment Banker.
+
+Users can interact with these AI agents to practice negotiation, decision-making, and professional communication in a safe, risk-free environment.
+
+### Key Features
+
+*   **Clean Architecture**: A robust codebase structured into Domain, Application, and Infrastructure layers for maximum maintainability and scalability.
+*   **Intelligent NPCs**: AI agents acting as realistic stakeholders with persistent memory and specific behavioral traits.
+*   **RAG Integration**: Retrieval-Augmented Generation ensuring agents have access to relevant documents and context.
+*   **Modern Technology Stack**:
+    *   **Backend**: Python, FastAPI.
+    *   **Frontend**: React, TypeScript.
