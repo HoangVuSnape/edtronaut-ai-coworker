@@ -1,0 +1,51 @@
+/* ================================================================== */
+/*  HintBanner                                                        */
+/* ================================================================== */
+
+.hint-banner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 20px;
+    background: var(--color-accent-glow);
+    border-bottom: 1px solid rgba(201, 168, 76, 0.25);
+    animation: hint-slide-in 0.35s ease;
+}
+
+@keyframes hint-slide-in {
+    from {
+        opacity: 0;
+        transform: translateY(-100%);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.hint-icon {
+    font-size: 1.3rem;
+    flex-shrink: 0;
+}
+
+.hint-text {
+    flex: 1;
+    font-size: 0.85rem;
+    color: var(--color-accent);
+    line-height: 1.45;
+}
+
+.hint-dismiss {
+    background: none;
+    border: none;
+    color: var(--color-accent);
+    font-size: 1rem;
+    opacity: 0.5;
+    transition: opacity var(--transition);
+    padding: 4px;
+}
+
+.hint-dismiss:hover {
+    opacity: 1;
+}
