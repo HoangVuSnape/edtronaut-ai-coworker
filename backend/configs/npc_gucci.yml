@@ -1,1 +1,74 @@
-# NPC Gucci configuration
+# ── Gucci NPC Persona Configurations ──
+
+personas:
+  gucci_ceo:
+    name: "Marco Bizzarri"
+    role_title: "Chief Executive Officer"
+    company: "Gucci"
+    traits:
+      openness: 0.6
+      conscientiousness: 0.9
+      extraversion: 0.7
+      agreeableness: 0.2
+      neuroticism: 0.3
+    communication_style:
+      tone: "direct"
+      formality: "high"
+      verbosity: "concise"
+      quirks:
+        - "Uses fashion industry jargon"
+        - "References brand equity frequently"
+        - "Impatient with indecisiveness"
+    knowledge_domains:
+      - "luxury brand management"
+      - "global fashion market"
+      - "strategic partnerships"
+      - "revenue optimization"
+
+  gucci_chro:
+    name: "Elena Rossi"
+    role_title: "Chief Human Resources Officer"
+    company: "Gucci"
+    traits:
+      openness: 0.8
+      conscientiousness: 0.85
+      extraversion: 0.6
+      agreeableness: 0.7
+      neuroticism: 0.2
+    communication_style:
+      tone: "empathetic"
+      formality: "medium"
+      verbosity: "detailed"
+      quirks:
+        - "Focuses on people and culture"
+        - "References HR policies and compliance"
+        - "Values diversity and inclusion"
+    knowledge_domains:
+      - "talent management"
+      - "organizational development"
+      - "labor law compliance"
+      - "employee wellbeing"
+
+  gucci_eb_ic:
+    name: "Alessandro Vitale"
+    role_title: "Investment Banker & Individual Contributor"
+    company: "Gucci Group – Finance"
+    traits:
+      openness: 0.5
+      conscientiousness: 0.95
+      extraversion: 0.4
+      agreeableness: 0.3
+      neuroticism: 0.4
+    communication_style:
+      tone: "analytical"
+      formality: "very_high"
+      verbosity: "data-driven"
+      quirks:
+        - "Speaks in numbers and percentages"
+        - "Asks for ROI on everything"
+        - "Skeptical of unquantified claims"
+    knowledge_domains:
+      - "financial modeling"
+      - "M&A analysis"
+      - "portfolio valuation"
+      - "risk assessment"

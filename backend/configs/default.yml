@@ -1,1 +1,68 @@
-# Default configuration
+# ── Edtronaut AI Coworker – Default Configuration ──
+
+app:
+  name: "edtronaut-ai-coworker"
+  version: "0.1.0"
+  debug: false
+
+# ── LLM Provider ──
+# Supported: openai, gemini, deepseek, zhipu
+# For AgentRouter: use provider="deepseek", set base_url="https://agentrouter.org/v1",
+# and put your AgentRouter token in DEEPSEEK_API_KEY.
+llm:
+  provider: "gemini"         # ← Switched to Gemini (free tier)
+  model: "gemini-2.5-flash"                  # "" = provider default
+  base_url: ""               # Uses default Gemini endpoint
+  temperature: 0.7
+  max_tokens: 1024
+  streaming: true
+
+# ── Embedding Provider ──
+# Supported: openai, gemini, zhipu
+# DeepSeek has no embedding API → set fallback_provider.
+embedding:
+  provider: "gemini"         # ← Must have embedding support (AgentRouter is LLM only)
+  model: ""                  # "" = provider default
+  dimensions: 768
+  fallback_provider: "gemini"
+
+# ── Databases ──
+redis:
+  url: "redis://localhost:6379/0"
+  session_ttl_seconds: 1800  # 30 minutes
+
+postgres:
+  url: "postgresql+asyncpg://edtronaut:edtronaut@localhost:5432/edtronaut"
+
+qdrant:
+  host: "localhost"
+  port: 6333
+  grpc_port: 6334
+  collection_name: "knowledge_base"
+
+# ── gRPC Server ──
+grpc:
+  host: "0.0.0.0"
+  port: 50051
+
+# ── REST API ──
+rest:
+  host: "0.0.0.0"
+  port: 8000
+
+# ── Auth ──
+auth:
+  jwt_secret_key: "CHANGE_ME_IN_PRODUCTION"
+  jwt_algorithm: "HS256"
+  access_token_expire_minutes: 15
+
+# ── Monitoring ──
+langfuse:
+  enabled: false
+  public_key: ""
+  secret_key: ""
+  host: "https://cloud.langfuse.com"
+
+logging:
+  level: "INFO"
+  format: "json"

@@ -50,3 +50,6 @@ npm-debug.log*
 # OS files
 # ========================
 desktop.ini
+
+# ignore folder skills_vu_ai
+skills_vu_ai/
