@@ -40,7 +40,7 @@ class OpenAIClient(LLMPort):
         api_key: str | None = None,
         model: str = "gpt-4o",
         default_temperature: float = 0.7,
-        default_max_tokens: int = 1024,
+        default_max_tokens: int = 4096,
         base_url: str | None = None,
         provider_name: str = "openai",
     ):

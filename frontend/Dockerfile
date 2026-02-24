@@ -21,7 +21,7 @@ RUN npm run build
 # ── Stage 2: Serve ──
 FROM nginx:alpine
 
-# Custom Nginx config for SPA routing
+# Custom Nginx config for SPA routing + streaming support
 RUN echo 'server { \
     listen 80; \
     root /usr/share/nginx/html; \
@@ -33,6 +33,12 @@ RUN echo 'server { \
     proxy_pass http://backend:8000; \
     proxy_set_header Host $host; \
     proxy_set_header X-Real-IP $remote_addr; \
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; \
+    proxy_set_header X-Forwarded-Proto $scheme; \
+    proxy_buffering off; \
+    proxy_cache off; \
+    proxy_read_timeout 300s; \
+    chunked_transfer_encoding on; \
     } \
     }' > /etc/nginx/conf.d/default.conf
 

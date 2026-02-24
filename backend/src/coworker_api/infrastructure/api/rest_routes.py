@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Security, status
+from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -617,6 +618,61 @@ async def delete_session(
 
 
 # Chat action endpoint (append to conversation)
+@chat_router.post("/api/npc/{npc_id}/chat/stream")
+async def chat_with_npc_stream(
+    npc_id: str,
+    body: ChatRequestBody,
+    user_claims: dict[str, Any] = Security(require_authenticated),
+):
+    """
+    Streaming chat endpoint.
+    """
+    from coworker_api.domain.exceptions import ConversationNotFoundError
+    from coworker_api.domain.models import Conversation, NPC
+
+    container = _get_container()
+    if not container.chat_service:
+        raise HTTPException(status_code=503, detail="Service not yet initialized")
+
+    if npc_id not in NPC_ROLES:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown NPC '{npc_id}'. Available: {list(NPC_ROLES.keys())}",
+        )
+
+    # Ensure session exists or create it
+    try:
+        try:
+            existing = await container.session_manager.load_session(body.sessionId)
+            if not _is_admin(user_claims) and str(existing.user_id) != str(user_claims.get("sub")):
+                raise HTTPException(status_code=403, detail="Forbidden")
+        except ConversationNotFoundError:
+            npc = NPC(name=npc_id, role_title=NPC_ROLES[npc_id])
+            conv = Conversation(
+                id=body.sessionId,
+                user_id=str(user_claims.get("sub")),
+                npc=npc,
+            )
+            await container.session_manager.save_session(conv)
+
+        async def _stream_generator():
+            async for chunk in container.chat_service.stream_message(
+                session_id=body.sessionId,
+                user_message=body.message,
+                use_rag=(body.useRag if body.useRag is not None else get_settings().rag.enabled),
+            ):
+                if chunk:
+                    yield chunk.encode("utf-8")
+
+        return StreamingResponse(_stream_generator(), media_type="text/plain")
+
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Chat streaming error", extra={"npc_id": npc_id, "session_id": body.sessionId})
+        raise HTTPException(status_code=500, detail="Failed to stream chat message")
+
+
 @chat_router.post("/api/npc/{npc_id}/chat", response_model=ChatResponseBody)
 async def chat_with_npc(
     npc_id: str,

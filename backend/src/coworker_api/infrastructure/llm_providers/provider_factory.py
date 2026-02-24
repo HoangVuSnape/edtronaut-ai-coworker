@@ -75,7 +75,7 @@ def create_llm_client(
     provider: str = "openai",
     model: str | None = None,
     temperature: float = 0.7,
-    max_tokens: int = 1024,
+    max_tokens: int = 4096,
     api_key: str | None = None,
     base_url: str | None = None,
 ) -> LLMPort:

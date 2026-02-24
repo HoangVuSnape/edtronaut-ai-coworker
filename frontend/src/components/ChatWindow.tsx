@@ -4,6 +4,7 @@
 // Distinguishes user messages from NPC messages, with per-NPC styling.
 
 import { useState, useRef, useEffect } from 'react';
+import ReactMarkdown from 'react-markdown';
 import type { Message } from '../api/grpc_client';
 import './ChatWindow.css';
 
@@ -72,6 +73,9 @@ export function ChatWindow({ messages, activeNpcId, onSend, isLoading = false }:
 
                 {messages.map((msg) => {
                     const isUser = msg.sender === 'user';
+                    // Skip rendering empty NPC messages (waiting for stream)
+                    if (!isUser && !msg.text) return null;
+
                     const meta = msg.npcId ? NPC_META[msg.npcId] : undefined;
                     return (
                         <div
@@ -81,7 +85,13 @@ export function ChatWindow({ messages, activeNpcId, onSend, isLoading = false }:
                             <div className="bubble-sender">
                                 {isUser ? 'You' : meta?.label ?? 'NPC'}
                             </div>
-                            <div className="bubble-text">{msg.text}</div>
+                            <div className="bubble-text">
+                                {isUser ? (
+                                    msg.text
+                                ) : (
+                                    <ReactMarkdown>{msg.text}</ReactMarkdown>
+                                )}
+                            </div>
                             <time className="bubble-time">
                                 {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                             </time>
@@ -89,7 +99,12 @@ export function ChatWindow({ messages, activeNpcId, onSend, isLoading = false }:
                     );
                 })}
 
-                {isLoading && (
+                {/* 
+                  Only show typing indicator if: 
+                   1. We are loading (waiting for response) 
+                   2. The latest message isn't an NPC response that already has text 
+                */}
+                {isLoading && (!messages.length || messages[messages.length - 1].sender === 'user' || !messages[messages.length - 1].text) && (
                     <div className="chat-bubble bubble-npc typing-indicator">
                         <span /><span /><span />
                     </div>

@@ -7,7 +7,7 @@ import { useState, useCallback } from 'react';
 import { ChatWindow } from './ChatWindow';
 import { NpcTogglePanel } from './NpcTogglePanel';
 import { HintBanner } from './HintBanner';
-import { sendMessageGrpc } from '../api/grpc_client';
+import { sendMessageStream } from '../api/grpc_client';
 import type { Message } from '../api/grpc_client';
 import './SimulationLayout.css';
 
@@ -68,39 +68,51 @@ export function SimulationLayout() {
             setSafetyMessage(undefined);
             setIsLoading(true);
 
+            // Prepare a placeholder NPC message
+            const npcId = crypto.randomUUID();
+            const npcMsgPlaceholder: Message = {
+                id: npcId,
+                sender: 'npc',
+                npcId: activeNpcId as Message['npcId'],
+                text: '',
+                timestamp: new Date().toISOString(),
+            };
+
+            setMessages((prev) => [...prev, npcMsgPlaceholder]);
+
             try {
-                const res = await sendMessageGrpc({
-                    sessionId,
-                    npcId: activeNpcId,
-                    message: text,
-                });
+                let fullText = '';
+                await sendMessageStream(
+                    {
+                        sessionId,
+                        npcId: activeNpcId,
+                        message: text,
+                    },
+                    (chunk) => {
+                        fullText += chunk;
+                        const updatedText = fullText;
+                        setMessages((prev) =>
+                            prev.map((msg) =>
+                                msg.id === npcId ? { ...msg, text: updatedText } : msg
+                            )
+                        );
+                    },
+                );
 
-                const npcMsg: Message = {
-                    id: crypto.randomUUID(),
-                    sender: 'npc',
-                    npcId: res.npcId as Message['npcId'],
-                    text: res.assistantMessage,
-                    timestamp: new Date().toISOString(),
-                };
-                setMessages((prev) => [...prev, npcMsg]);
-                setHint(res.hint);
 
-                // Handle safety flags
-                if (res.safetyFlags && res.safetyFlags.length > 0) {
-                    setSafetyMessage(
-                        'This simulation focuses on HRM & leadership at Gucci. Please keep the conversation within this scope.',
-                    );
-                }
+                // If we want additional metadata like hints or safety flags,
+                // we might need a separate call or a more complex stream protocol (JSON per line).
+                // For now, simple text streaming satisfies "hiển thị từ từ".
+
             } catch (err) {
                 console.error('Chat error:', err);
-                const errorMsg: Message = {
-                    id: crypto.randomUUID(),
-                    sender: 'npc',
-                    npcId: activeNpcId as Message['npcId'],
-                    text: 'Sorry, something went wrong. Please try again.',
-                    timestamp: new Date().toISOString(),
-                };
-                setMessages((prev) => [...prev, errorMsg]);
+                setMessages((prev) =>
+                    prev.map((msg) =>
+                        msg.id === npcId
+                            ? { ...msg, text: 'Sorry, something went wrong. Please try again.' }
+                            : msg
+                    )
+                );
             } finally {
                 setIsLoading(false);
             }

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from time import perf_counter
-from typing import Any, Optional
+from typing import Any, AsyncIterator, Optional
 
 from coworker_api.application.session_manager import SessionManager
 from coworker_api.domain.models import Conversation, Speaker
@@ -43,6 +43,73 @@ class ChatService:
         self._session_manager = session_manager
         self._llm = llm_port
         self._retriever = retriever_port
+
+    async def stream_message(
+        self,
+        session_id: str,
+        user_message: str,
+        *,
+        use_rag: bool = True,
+    ) -> AsyncIterator[str]:
+        """Stream NPC response chunks."""
+        conversation = await self._session_manager.load_session(session_id)
+        persona_id = conversation.npc.name
+
+        # For streaming, we still want to log the start of the trace
+        trace = start_chat_trace(
+            session_id=session_id,
+            user_id=conversation.user_id,
+            persona_id=persona_id,
+            metadata={
+                "message_length": len(user_message),
+                "requested_rag": use_rag,
+                "streaming": True,
+            },
+            input_text=user_message,
+        )
+
+        try:
+            conversation.add_turn(speaker=Speaker.USER, content=user_message)
+
+            rag_context = ""
+            if use_rag and self._retriever:
+                rag_context, _ = await self._retrieve_context_with_docs(user_message)
+
+            prompt = self._build_prompt(conversation, rag_context)
+            system_prompt = get_persona_prompt(persona_id)
+
+            full_response = []
+            async for chunk in self._llm.generate_stream(
+                prompt=prompt,
+                system_prompt=system_prompt,
+            ):
+                full_response.append(chunk)
+                yield chunk
+
+            # After streaming finished, save the turn
+            npc_response = "".join(full_response)
+            npc_turn = conversation.add_turn(
+                speaker=Speaker.NPC,
+                content=npc_response,
+                metadata={"rag_used": bool(rag_context), "streaming": True},
+            )
+            await self._session_manager.save_session(conversation)
+
+            update_chat_trace(
+                trace,
+                output={
+                    "final_response": npc_response,
+                    "turn_number": npc_turn.turn_number,
+                },
+                metadata={"status": "success"},
+            )
+        except Exception as e:
+            update_chat_trace(trace, metadata={"status": "error", "error": str(e)})
+            logger.exception("Streaming error")
+            yield f"Error: {str(e)}"
+        finally:
+            end_trace(trace)
+            flush()
 
     async def process_message(
         self,
