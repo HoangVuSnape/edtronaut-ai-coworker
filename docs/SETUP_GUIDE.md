@@ -103,7 +103,7 @@ The backend supports **4 LLM providers** out of the box:
 
 | Provider | Models | Embedding | Free Tier |
 |----------|--------|-----------|-----------|
-| **gemini** (default) | `gemini-2.0-flash`, `gemini-pro` | `text-embedding-004` | ✅ Yes |
+| **gemini** (default) | `gemini-2.0-flash`, `gemini-pro` | `gemini-embedding-001` | ✅ Yes |
 | **openai** | `gpt-4o`, `gpt-4o-mini` | `text-embedding-3-small` | ❌ Paid |
 | **deepseek** | `deepseek-chat`, `deepseek-r1-0528` | ❌ (uses fallback) | ✅ Free credits |
 | **zhipu** | `glm-4.5`, `glm-4.6` | `embedding-3` | ✅ Free credits |

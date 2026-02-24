@@ -4,6 +4,8 @@
 // transport implementation.  When a real .proto generated client is available,
 // replace the body of `sendMessageGrpc` with the generated stub call.
 
+import { getAuthHeaders } from './auth';
+
 /* ------------------------------------------------------------------ */
 /*  Shared types (used by both gRPC and REST clients)                 */
 /* ------------------------------------------------------------------ */
@@ -44,7 +46,10 @@ export async function sendMessageGrpc(req: ChatRequest): Promise<ChatResponse> {
     // Placeholder – delegates to REST endpoint until gRPC-web proxy is set up.
     const res = await fetch(`/api/npc/${req.npcId}/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+            'Content-Type': 'application/json',
+            ...getAuthHeaders(),
+        },
         body: JSON.stringify({ sessionId: req.sessionId, message: req.message }),
     });
 

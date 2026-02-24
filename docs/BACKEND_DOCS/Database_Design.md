@@ -14,9 +14,10 @@ This project uses a **hybrid database architecture** tailored for an AI-driven a
 ## 2. Relational Database (PostgreSQL)
 
 ### Design Rules (per `schema-design.md`)
-*   **Primary Keys**: Use **UUID** (v4) for all tables to ensure global uniqueness and easier data migration/merging in the future.
+*   **Primary Keys**: Prefer **UUID** (v4) for domain tables (`users`, `npcs`, `scenarios`). Session-facing tables may use external string IDs (`conversations.id`) to align with client session keys.
 *   **Timestamps**: Every table MUST have `created_at` and `updated_at` using `TIMESTAMPTZ` (UTC). Use `deleted_at` for soft deletes where audit trails are important.
 *   **Normalization**: Normalize core data (User, NPC, Scenario) but allow JSONB columns for flexible schema-less data (e.g., specific NPC traits or experimental log attributes).
+*   **Migrations**: Use **Alembic** migrations (`backend/migrations/`) as the source of truth for schema evolution. Avoid relying on `create_all()` in staging/production.
 
 ### Core Schema
 
@@ -44,23 +45,29 @@ This project uses a **hybrid database architecture** tailored for an AI-driven a
     *   `npc_id` (UUID, FK -> `npcs.id`)
 
 #### 2.3 Application State (Sessions & Logs)
-*   **`simulations`** (A specific run of a scenario)
-    *   `id` (UUID, PK)
+*   **`conversations`** (A specific run of a chat simulation)
+    *   `id` (VARCHAR, PK) - Session ID (client-provided).
     *   `user_id` (UUID, FK -> `users.id`)
-    *   `scenario_id` (UUID, FK -> `scenarios.id`)
-    *   `status` (ENUM: 'active', 'completed', 'archived')
-    *   `learning_outcome_score` (FLOAT, Nullable) - To be filled by `Analysis Service`.
+    *   `npc_name` (VARCHAR)
+    *   `npc_role_title` (VARCHAR, Nullable)
+    *   `npc_data` (JSON, Nullable)
+    *   `scenario_data` (JSON, Nullable)
+    *   `status` (VARCHAR: `active|completed|archived`)
     *   `started_at` (TIMESTAMPTZ)
     *   `ended_at` (TIMESTAMPTZ, Nullable)
+    *   `created_at`, `updated_at` (TIMESTAMPTZ)
 
-*   **`simulation_logs`** (The exact conversation record for analytics)
-    *   `id` (UUID, PK)
-    *   `simulation_id` (UUID, FK -> `simulations.id`)
+*   **`turns`** (The exact conversation record for analytics/debugging)
+    *   `id` (VARCHAR, PK)
+    *   `conversation_id` (VARCHAR, FK -> `conversations.id`)
     *   `turn_number` (INTEGER)
-    *   `speaker` (ENUM: 'user', 'npc', 'system')
+    *   `speaker` (VARCHAR: `user|npc|system`)
     *   `content` (TEXT)
-    *   `metadata` (JSONB) - Token usage, latency, sentiment score.
+    *   `metadata_json` (JSON, Nullable) - Token usage, latency, hints, tracing metadata.
     *   `created_at` (TIMESTAMPTZ)
+
+> Note: Older docs used the names `simulations` / `simulation_logs`. Runtime implementation currently uses
+> `conversations` / `turns` with equivalent semantics.
 
 ---
 

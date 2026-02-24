@@ -3,6 +3,7 @@
 // Plain fetch-based client hitting POST /api/npc/{npcId}/chat on the backend.
 // This can be used as a simple alternative when gRPC-web is not configured.
 
+import { getAuthHeaders } from './auth';
 import type { ChatRequest, ChatResponse } from './grpc_client';
 
 /**
@@ -11,7 +12,10 @@ import type { ChatRequest, ChatResponse } from './grpc_client';
 export async function sendMessageRest(req: ChatRequest): Promise<ChatResponse> {
     const res = await fetch(`/api/npc/${req.npcId}/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+            'Content-Type': 'application/json',
+            ...getAuthHeaders()
+        },
         body: JSON.stringify({ sessionId: req.sessionId, message: req.message }),
     });
 

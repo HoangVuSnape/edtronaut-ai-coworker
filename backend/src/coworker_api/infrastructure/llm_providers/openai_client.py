@@ -29,6 +29,11 @@ class OpenAIClient(LLMPort):
 
     Supports any provider with a chat completions API by setting `base_url`.
     """
+    _MAX_CONTINUATION_CALLS = 2
+    _CONTINUE_PROMPT = (
+        "Continue exactly from where you stopped. "
+        "Do not repeat previous text. Complete the answer."
+    )
 
     def __init__(
         self,
@@ -56,22 +61,73 @@ class OpenAIClient(LLMPort):
         """Generate a text completion."""
         messages = self._build_messages(system_prompt, prompt)
         try:
-            response = await self._client.chat.completions.create(
-                model=self._model,
-                messages=messages,
-                temperature=temperature or self._default_temperature,
-                max_tokens=max_tokens or self._default_max_tokens,
+            resolved_temperature = (
+                temperature if temperature is not None else self._default_temperature
             )
-            content = response.choices[0].message.content or ""
-            logger.debug(
-                "LLM response generated",
-                extra={
-                    "provider": self._provider_name,
-                    "model": self._model,
-                    "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
-                    "completion_tokens": response.usage.completion_tokens if response.usage else 0,
-                },
+            resolved_max_tokens = (
+                max_tokens if max_tokens is not None else self._default_max_tokens
             )
+
+            parts: list[str] = []
+            final_finish_reason = ""
+            for attempt in range(self._MAX_CONTINUATION_CALLS + 1):
+                response = await self._client.chat.completions.create(
+                    model=self._model,
+                    messages=messages,
+                    temperature=resolved_temperature,
+                    max_tokens=resolved_max_tokens,
+                )
+
+                choice = response.choices[0]
+                content_piece = choice.message.content or ""
+                finish_reason = getattr(choice, "finish_reason", "") or ""
+                final_finish_reason = finish_reason
+                parts.append(content_piece)
+
+                usage = getattr(response, "usage", None)
+                prompt_tokens = getattr(usage, "prompt_tokens", 0) if usage else 0
+                completion_tokens = getattr(usage, "completion_tokens", 0) if usage else 0
+                logger.debug(
+                    "LLM response chunk generated: provider=%s model=%s finish_reason=%s "
+                    "prompt_tokens=%s completion_tokens=%s chars=%s attempt=%s",
+                    self._provider_name,
+                    self._model,
+                    finish_reason or "unknown",
+                    prompt_tokens,
+                    completion_tokens,
+                    len(content_piece),
+                    attempt + 1,
+                )
+
+                if finish_reason != "length":
+                    break
+
+                if attempt >= self._MAX_CONTINUATION_CALLS:
+                    logger.warning(
+                        "LLM response may be truncated after continuation attempts: "
+                        "provider=%s model=%s",
+                        self._provider_name,
+                        self._model,
+                    )
+                    break
+
+                if not content_piece.strip():
+                    logger.warning(
+                        "LLM returned empty chunk with finish_reason=length; aborting continuation"
+                    )
+                    break
+
+                messages.append({"role": "assistant", "content": content_piece})
+                messages.append({"role": "user", "content": self._CONTINUE_PROMPT})
+
+            content = "".join(parts).strip()
+            if not content:
+                logger.warning(
+                    "LLM returned empty content: provider=%s model=%s finish_reason=%s",
+                    self._provider_name,
+                    self._model,
+                    final_finish_reason or "unknown",
+                )
             return content
         except Exception as e:
             logger.error(f"{self._provider_name} API call failed", exc_info=True)

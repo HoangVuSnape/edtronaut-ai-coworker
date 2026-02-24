@@ -10,16 +10,16 @@ The **Infrastructure Layer** implements the technical details required to suppor
 - **Purpose:** Exposes the application logic to the outside world (Frontend).
 - **Components:**
   - **`main.py`**: Factors the FastAPI application, wires up dependencies (DI), and starts the server.
-  - **`rest_routes.py`**: Standard REST endpoints for health checks, debugging, or simple CRUD if needed.
-  - **`grpc_server.py`**: The **SOLE** communication channel for all Client-Server interactions (Frontend ↔ Backend).
+  - **`rest_routes.py`**: Primary API surface today (health, auth, CRUD, chat action endpoints).
+  - **`grpc_server.py`**: Skeleton/in-progress channel for future client-server RPC flows.
   - **`protos/`**: Directory containing all `.proto` definitions shared between FE and BE.
 
 ### 1b. GRPC Rules
 - **Protocol**: HTTP/2 with Protocol Buffers (Probobuf).
 - **Scope**:
-    1.  **Frontend ↔ Backend**: All user interactions (Chat, Helpers, Auth).
-    2.  **Retrieval (RAG)**: The search/retrieval API is exposed via gRPC.
-    3.  **Vector DB (Qdrant)**: Backend connects to Qdrant using its gRPC interface for maximum performance.
+    1.  **Frontend ↔ Backend**: Planned for high-throughput RPC and streaming use cases.
+    2.  **Retrieval (RAG)**: May be exposed via gRPC when retrieval service is decoupled.
+    3.  **Vector DB (Qdrant)**: Backend connects to Qdrant using its gRPC interface for performance.
 
 
 ### 2. Database / Memory Store (`db/`)
@@ -73,8 +73,9 @@ The **Infrastructure Layer** implements the technical details required to suppor
 - **File:** `frontend_client.py` (if bidirectional streaming is needed).
 
 ### 9. Communication Protocols (Rules)
-- **Primary Transport**: gRPC (Google Remote Procedure Call).
-- **IDL**: Protocol Buffers header files (`.proto`) must be the single source of truth for API schemas.
+- **Primary Transport (current runtime)**: REST (FastAPI).
+- **Secondary/Planned Transport**: gRPC (Google Remote Procedure Call).
+- **IDL for gRPC**: Protocol Buffers header files (`.proto`) are the source of truth for gRPC schemas.
 - **Tools**: Use `protoc` or `buf` to generate Python (Backend) and TypeScript (Frontend) stubs.
 - **Retrieval**: When the Application Layer requests context, it MAY use a gRPC client to query a standalone RAG service (if decoupled) or simply expose the Retrieval data map to the Frontend via gRPC.
 
@@ -88,7 +89,5 @@ The **Infrastructure Layer** implements the technical details required to suppor
 - This ensures the Application layer remains decoupled from specific technologies.
 
 ### 2. Request Handling
-- `grpc_server.py` receives a Protobuf message.
-- It translates the message into a Domain object or primitive.
-- It calls the appropriate Application Service method.
-- It translates the result back to a Protobuf response.
+- `rest_routes.py` currently receives HTTP/JSON requests and maps them to Application services.
+- `grpc_server.py` remains available for incremental RPC adoption once service definitions are finalized.

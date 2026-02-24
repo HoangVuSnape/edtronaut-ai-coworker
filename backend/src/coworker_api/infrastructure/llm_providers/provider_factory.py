@@ -7,7 +7,7 @@ Supported providers:
   │ Provider     │ LLM Models                    │ Embedding Models           │
   ├──────────────┼───────────────────────────────┼────────────────────────────┤
   │ openai       │ gpt-4o, gpt-4o-mini, ...      │ text-embedding-3-small     │
-  │ gemini       │ gemini-2.0-flash, gemini-pro  │ text-embedding-004         │
+  │ gemini       │ gemini-2.0-flash, gemini-pro  │ gemini-embedding-001         │
   │ deepseek     │ deepseek-chat, deepseek-r1    │ (use gemini/openai)        │
   │ zhipu        │ glm-4.5, glm-4.6              │ embedding-3                │
   └──────────────┴───────────────────────────────┴────────────────────────────┘
@@ -51,8 +51,8 @@ PROVIDERS: dict[str, ProviderConfig] = {
         base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
         env_key_name="GEMINI_API_KEY",
         default_model="gemini-2.0-flash",
-        default_embedding_model="text-embedding-004",
-        default_embedding_dimensions=768,
+        default_embedding_model="gemini-embedding-001",
+        default_embedding_dimensions=3072,
     ),
     "deepseek": ProviderConfig(
         base_url="https://api.deepseek.com",

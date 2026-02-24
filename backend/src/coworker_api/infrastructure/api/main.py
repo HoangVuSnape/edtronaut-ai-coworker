@@ -78,7 +78,15 @@ class AppContainer:
         self.postgres_store = PostgresConversationStore(
             database_url=s.postgres.url,
         )
-        await self.postgres_store.create_tables()
+        if s.postgres.run_migrations_on_startup:
+            await self.postgres_store.migrate_to_head()
+        elif s.postgres.bootstrap_schema_on_startup:
+            await self.postgres_store.create_tables()
+        else:
+            logger.info("PostgreSQL schema management skipped on startup")
+
+        # Automatically seed default data (admin user, NPCs) if empty
+        await self.postgres_store.bootstrap_data()
 
         # Infrastructure — Composite (Redis + PostgreSQL)
         self.memory_store = CompositeMemoryStore(

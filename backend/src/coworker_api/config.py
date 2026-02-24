@@ -10,16 +10,21 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional
 
 import yaml
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-# ── Resolve paths ──
+# Resolve paths
 _BACKEND_DIR = Path(__file__).resolve().parent.parent.parent  # backend/
+_PROJECT_ROOT = _BACKEND_DIR.parent
 _CONFIGS_DIR = _BACKEND_DIR / "configs"
+
+# Load .env for local runs. Docker compose env vars still win.
+load_dotenv(dotenv_path=_PROJECT_ROOT / ".env", override=False)
+load_dotenv(dotenv_path=_BACKEND_DIR / ".env", override=False)
 
 
 def _load_yaml_config(filename: str = "default.yml") -> dict:
@@ -31,7 +36,12 @@ def _load_yaml_config(filename: str = "default.yml") -> dict:
         return yaml.safe_load(f) or {}
 
 
-# ── Sub-Models (using BaseModel for simple struct) ──
+def _normalize_env_value(raw_value: str) -> str:
+    value = raw_value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+    return value
+
 
 class LLMSettings(BaseModel):
     provider: str = "openai"
@@ -59,6 +69,8 @@ class RedisSettings(BaseModel):
 
 class PostgresSettings(BaseModel):
     url: str = "postgresql+asyncpg://edtronaut:edtronaut@localhost:5432/edtronaut"
+    run_migrations_on_startup: bool = True
+    bootstrap_schema_on_startup: bool = False
 
 
 class QdrantSettings(BaseModel):
@@ -78,6 +90,10 @@ class RESTSettings(BaseModel):
     port: int = 8000
 
 
+class RAGSettings(BaseModel):
+    enabled: bool = True
+
+
 class AuthSettings(BaseModel):
     jwt_secret_key: str = "CHANGE_ME_IN_PRODUCTION"
     jwt_algorithm: str = "HS256"
@@ -90,8 +106,6 @@ class LangfuseSettings(BaseModel):
     secret_key: str = ""
     host: str = "https://cloud.langfuse.com"
 
-
-# ── Main Settings ──
 
 class Settings(BaseSettings):
     """
@@ -107,6 +121,8 @@ class Settings(BaseSettings):
         env_nested_delimiter="__",
         case_sensitive=False,
         extra="ignore",
+        env_file=(str(_PROJECT_ROOT / ".env"), str(_BACKEND_DIR / ".env")),
+        env_file_encoding="utf-8",
     )
 
     # App
@@ -122,6 +138,7 @@ class Settings(BaseSettings):
     qdrant: QdrantSettings = Field(default_factory=QdrantSettings)
     grpc: GRPCSettings = Field(default_factory=GRPCSettings)
     rest: RESTSettings = Field(default_factory=RESTSettings)
+    rag: RAGSettings = Field(default_factory=RAGSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
     langfuse: LangfuseSettings = Field(default_factory=LangfuseSettings)
 
@@ -132,7 +149,7 @@ def get_settings() -> Settings:
     Singleton factory for application settings.
 
     Priority: Environment Variables > YAML config > Defaults.
-    
+
     We manually override YAML values with Environment variables matching the
     SECTION__FIELD pattern (e.g. REDIS__URL) to ensure Docker environment
     variables always take precedence over YAML defaults (like localhost).
@@ -142,31 +159,48 @@ def get_settings() -> Settings:
     # 1. Collect environment variable overrides (SECTION__FIELD)
     env_overrides: dict[str, dict[str, str]] = {}
     for key, value in os.environ.items():
-        if "__" in key:
-            # Only support 1 level of nesting: SECTION__FIELD
-            parts = key.lower().split("__", 1)
-            if len(parts) == 2:
-                section, field = parts
-                if section not in env_overrides:
-                    env_overrides[section] = {}
-                env_overrides[section][field] = value
+        if "__" not in key:
+            continue
+
+        parts = key.lower().split("__", 1)
+        if len(parts) != 2:
+            continue
+
+        section, field = parts
+        env_overrides.setdefault(section, {})
+        env_overrides[section][field] = _normalize_env_value(value)
+
+    # 1b. Compatibility for flat Langfuse env vars shown in Langfuse dashboard docs.
+    langfuse_compat_map = {
+        "LANGFUSE_PUBLIC_KEY": "public_key",
+        "LANGFUSE_SECRET_KEY": "secret_key",
+        "LANGFUSE_BASE_URL": "host",
+        "LANGFUSE_HOST": "host",
+        "LANGFUSE_ENABLED": "enabled",
+    }
+    for env_key, field in langfuse_compat_map.items():
+        raw_value = os.getenv(env_key)
+        if raw_value is None:
+            continue
+        value = _normalize_env_value(raw_value)
+        if value == "":
+            continue
+
+        env_overrides.setdefault("langfuse", {})
+        # Preserve explicit nested vars if both are present.
+        env_overrides["langfuse"].setdefault(field, value)
 
     # 2. Merge Env overrides into YAML configuration
     for section, fields in env_overrides.items():
         if section == "app":
-            # Special 'app' handling logic later, just store for now
             yaml_config.setdefault("app", {}).update(fields)
         else:
-            # Create section if missing to ensure Env vars make it to Settings
-            # (Settings will ignore if it's an unknown section due to extra="ignore")
             yaml_config.setdefault(section, {}).update(fields)
 
     # 3. Flatten YAML into constructor arguments for Settings
-    #    (Pydantic V2 BaseSettings initialized with kwargs treats them as priority)
     overrides: dict = {}
     for section_key, section_val in yaml_config.items():
         if isinstance(section_val, dict):
-            # Special handling: map "app" section to flat fields
             if section_key == "app":
                 for k, v in section_val.items():
                     if k == "debug":
@@ -174,7 +208,6 @@ def get_settings() -> Settings:
                     else:
                         overrides[f"app_{k}"] = v
             else:
-                # Pass nested dicts directly — matching sub-models
                 overrides[section_key] = section_val
         else:
             overrides[section_key] = section_val

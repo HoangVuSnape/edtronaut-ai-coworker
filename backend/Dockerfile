@@ -33,6 +33,8 @@ COPY --from=builder /app/.venv /app/.venv
 # Copy application source and configs
 COPY src/ ./src/
 COPY configs/ ./configs/
+COPY alembic.ini ./alembic.ini
+COPY migrations/ ./migrations/
 
 # Set PATH so the venv Python is used
 ENV PATH="/app/.venv/bin:$PATH" \

@@ -53,12 +53,14 @@ class QdrantVectorStore:
                 )
                 # Ensure collection exists
                 await self._ensure_collection()
+            except VectorStoreError:
+                raise
             except Exception as e:
                 raise VectorStoreError(f"Failed to connect to Qdrant: {e}") from e
         return self._client
 
     async def _ensure_collection(self) -> None:
-        """Create the collection if it doesn't exist."""
+        """Create or validate collection vector size."""
         client = self._client
         if client is None:
             return
@@ -73,6 +75,37 @@ class QdrantVectorStore:
                 ),
             )
             logger.info(f"Created Qdrant collection: {self._collection_name}")
+            return
+
+        info = await client.get_collection(self._collection_name)
+        existing_vector_size = self._extract_vector_size(info.config.params.vectors)
+        if existing_vector_size is None or existing_vector_size == self._vector_size:
+            return
+
+        points_count = info.points_count or 0
+        if points_count == 0:
+            await client.delete_collection(collection_name=self._collection_name)
+            await client.create_collection(
+                collection_name=self._collection_name,
+                vectors_config=VectorParams(
+                    size=self._vector_size,
+                    distance=Distance.COSINE,
+                ),
+            )
+            logger.warning(
+                "Recreated Qdrant collection '%s' to match vector size: old=%s new=%s",
+                self._collection_name,
+                existing_vector_size,
+                self._vector_size,
+            )
+            return
+
+        raise VectorStoreError(
+            "Qdrant collection vector size mismatch for "
+            f"'{self._collection_name}': expected {self._vector_size}, "
+            f"found {existing_vector_size} with {points_count} existing points. "
+            "Recreate the collection and reindex documents."
+        )
 
     async def upsert(
         self,
@@ -133,13 +166,15 @@ class QdrantVectorStore:
             qdrant_filter = Filter(must=conditions)
 
         try:
-            results = await client.search(
+            response = await client.query_points(
                 collection_name=self._collection_name,
-                query_vector=query_vector,
+                query=query_vector,
                 limit=top_k,
                 score_threshold=score_threshold,
                 query_filter=qdrant_filter,
+                with_payload=True,
             )
+            results = response.points or []
 
             return [
                 {
@@ -155,6 +190,19 @@ class QdrantVectorStore:
             ]
         except Exception as e:
             raise VectorStoreError(f"Vector search failed: {e}") from e
+
+    @staticmethod
+    def _extract_vector_size(vectors_config: Any) -> int | None:
+        """Extract vector size from Qdrant collection vectors config."""
+        if vectors_config is None:
+            return None
+        if hasattr(vectors_config, "size"):
+            return int(vectors_config.size)
+        if isinstance(vectors_config, dict):
+            for value in vectors_config.values():
+                if hasattr(value, "size"):
+                    return int(value.size)
+        return None
 
     async def close(self) -> None:
         """Close the Qdrant client."""

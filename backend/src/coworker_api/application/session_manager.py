@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-from coworker_api.domain.models import Conversation, NPC, Speaker
+from coworker_api.domain.models import Conversation, NPC, ScenarioState, Speaker
 from coworker_api.domain.exceptions import ConversationNotFoundError
 from coworker_api.domain.ports import MemoryPort
 from coworker_api.domain.memory.schemas import MemoryState
@@ -32,14 +32,25 @@ class SessionManager:
         scenario_id: str | None = None,
     ) -> Conversation:
         """Create a new conversation session and persist it."""
+        scenario = (
+            ScenarioState(scenario_id=scenario_id)
+            if scenario_id is not None
+            else None
+        )
         conversation = Conversation(
             user_id=user_id,
             npc=npc,
+            scenario=scenario,
         )
         await self._memory.save_conversation(conversation)
         logger.info(
             "Session created",
-            extra={"session_id": conversation.id, "user_id": user_id, "npc": npc.name},
+            extra={
+                "session_id": conversation.id,
+                "user_id": user_id,
+                "npc": npc.name,
+                "scenario_id": scenario_id,
+            },
         )
         return conversation
 
