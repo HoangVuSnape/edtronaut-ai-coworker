@@ -28,6 +28,8 @@ venv/
 dist/
 build/
 *.whl
+# Generated gRPC stubs (rebuilt during Docker build)
+backend/src/coworker_api/generated/coworker_pb2*
 
 # ========================
 # IDE & Editor
@@ -50,3 +52,6 @@ npm-debug.log*
 # OS files
 # ========================
 desktop.ini
+
+# ignore folder skills_vu_ai
+skills_vu_ai/

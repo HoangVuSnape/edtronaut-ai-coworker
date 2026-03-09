@@ -1,11 +1,15 @@
-// gRPC-web client kết nối backend
+// gRPC Client — Frontend → gRPC Gateway → gRPC Server
 // ---
-// This module defines the shared request/response types and the gRPC-web
-// transport implementation.  When a real .proto generated client is available,
-// replace the body of `sendMessageGrpc` with the generated stub call.
+// ALL traffic goes through gRPC:
+//   Browser → HTTP/JSON → /rpc/* gateway → gRPC channel → gRPC Server (:50051)
+//
+// The /rpc/ endpoints are a thin HTTP→gRPC translation layer.
+// gRPC is the PRIMARY transport protocol.
+
+import { getAuthHeaders } from './auth';
 
 /* ------------------------------------------------------------------ */
-/*  Shared types (used by both gRPC and REST clients)                 */
+/*  Shared types                                                       */
 /* ------------------------------------------------------------------ */
 
 export interface ChatRequest {
@@ -30,26 +34,88 @@ export interface Message {
 }
 
 /* ------------------------------------------------------------------ */
-/*  gRPC-web implementation                                           */
+/*  Chat via gRPC streaming                                            */
 /* ------------------------------------------------------------------ */
 
 /**
- * Send a chat message to the backend via gRPC-web.
+ * Stream a chat message through gRPC.
  *
- * TODO: Replace with actual grpc-web generated client when proto
- *       definitions are finalised.  Currently falls back to the REST
- *       transport so the UI remains functional during early dev.
+ * Flow: Browser → POST /rpc/chat/{npcId}/stream → gRPC Gateway
+ *       → gRPC ChatService.StreamMessage on port 50051
+ *       → streamed response tokens
+ */
+export async function sendMessageStream(
+    req: ChatRequest,
+    onChunk: (text: string) => void,
+): Promise<void> {
+    const doFetch = async () => {
+        return fetch(`/rpc/chat/${req.npcId}/stream`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                ...getAuthHeaders(),
+            },
+            body: JSON.stringify({
+                sessionId: req.sessionId,
+                npcId: req.npcId,
+                message: req.message,
+            }),
+        });
+    };
+
+    let res = await doFetch();
+
+    // Retry on 401: re-authenticate and try once more
+    if (res.status === 401) {
+        const { login } = await import('./auth');
+        await login('admin@test.com', 'Admin@123');
+        res = await doFetch();
+    }
+
+    if (!res.ok) {
+        throw new Error(`gRPC stream request failed: ${res.status} ${res.statusText}`);
+    }
+
+    const reader = res.body?.getReader();
+    if (!reader) throw new Error('Response body is not readable');
+
+    const decoder = new TextDecoder();
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const text = decoder.decode(value, { stream: true });
+        if (text) {
+            onChunk(text);
+        }
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Unary chat via gRPC                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Send a chat message through gRPC unary call.
+ *
+ * Flow: Browser → POST /rpc/chat/{npcId}/send → gRPC Gateway
+ *       → gRPC ChatService.SendMessage on port 50051
  */
 export async function sendMessageGrpc(req: ChatRequest): Promise<ChatResponse> {
-    // Placeholder – delegates to REST endpoint until gRPC-web proxy is set up.
-    const res = await fetch(`/api/npc/${req.npcId}/chat`, {
+    const res = await fetch(`/rpc/chat/${req.npcId}/send`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: req.sessionId, message: req.message }),
+        headers: {
+            'Content-Type': 'application/json',
+            ...getAuthHeaders(),
+        },
+        body: JSON.stringify({
+            sessionId: req.sessionId,
+            npcId: req.npcId,
+            message: req.message,
+        }),
     });
 
     if (!res.ok) {
-        throw new Error(`Chat request failed: ${res.status} ${res.statusText}`);
+        throw new Error(`gRPC request failed: ${res.status} ${res.statusText}`);
     }
 
     return res.json();

@@ -1,1 +1,7 @@
-# Pytest fixtures
+"""Pytest configuration and shared fixtures."""
+
+import sys
+from pathlib import Path
+
+# Ensure the src directory is on the Python path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))

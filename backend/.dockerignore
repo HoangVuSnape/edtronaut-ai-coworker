@@ -1,0 +1,45 @@
+# ── Build & Runtime ──
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── Virtual env ──
+.venv/
+venv/
+env/
+
+# ── IDE ──
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Tests & CI ──
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# ── Git ──
+.git/
+.gitignore
+
+# ── Docs & notebooks ──
+*.md
+!README.md
+notebooks/
+docs/
+
+# ── Docker ──
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# ── OS ──
+.DS_Store
+Thumbs.db

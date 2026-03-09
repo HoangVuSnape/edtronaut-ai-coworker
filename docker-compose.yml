@@ -1,0 +1,126 @@
+# ═══════════════════════════════════════════════════════════
+# Edtronaut AI Coworker — Docker Compose (Production)
+# One-command start: docker compose up --build
+# ═══════════════════════════════════════════════════════════
+
+services:
+
+  # ── PostgreSQL ──
+  postgres:
+    image: postgres:16-alpine
+    container_name: edtronaut-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-edtronaut}
+      POSTGRES_USER: ${POSTGRES_USER:-edtronaut}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-edtronaut_secret}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-edtronaut}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend-net
+
+  # ── Redis ──
+  redis:
+    image: redis:7-alpine
+    container_name: edtronaut-redis
+    command: redis-server --save 60 1 --loglevel warning
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend-net
+
+  # ── Qdrant Vector DB ──
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: edtronaut-qdrant
+    ports:
+      - "6333:6333" # REST
+      - "6334:6334" # gRPC
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: [ "CMD-SHELL", "bash -c ':> /dev/tcp/localhost/6333' || exit 1" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - backend-net
+
+  # ── Backend (FastAPI + gRPC) ──
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: edtronaut-backend
+    env_file: .env
+    environment:
+      # Override config.py defaults for Docker networking
+      REDIS__URL: redis://redis:6379/0
+      POSTGRES__URL: postgresql+asyncpg://${POSTGRES_USER:-edtronaut}:${POSTGRES_PASSWORD:-edtronaut_secret}@postgres:5432/${POSTGRES_DB:-edtronaut}
+      QDRANT__HOST: qdrant
+      QDRANT__PORT: 6333
+      QDRANT__GRPC_PORT: 6334
+    ports:
+      - "8000:8000" # REST API
+      - "50051:50051" # gRPC
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" ]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    networks:
+      - backend-net
+      - frontend-net
+
+  # ── Frontend (React + Nginx) ──
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: edtronaut-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "wget", "-q", "--spider", "http://localhost:80/" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - frontend-net
+
+# ── Networks ──
+networks:
+  backend-net:
+    driver: bridge
+  frontend-net:
+    driver: bridge
+
+# ── Persistent Volumes ──
+volumes:
+  postgres_data:
+  redis_data:
+  qdrant_data:

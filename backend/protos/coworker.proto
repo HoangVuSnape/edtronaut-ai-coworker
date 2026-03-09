@@ -1,0 +1,132 @@
+syntax = "proto3";
+
+package edtronaut;
+
+// ═══════════════════════════════════════════════════════
+// Edtronaut AI Coworker — gRPC Service Definitions
+// ═══════════════════════════════════════════════════════
+
+// ── Auth Service ──
+
+service AuthService {
+  rpc Login(LoginRequest) returns (LoginResponse);
+}
+
+message LoginRequest {
+  string email = 1;
+  string password = 2;
+}
+
+message LoginResponse {
+  string access_token = 1;
+  string token_type = 2;
+  int32 expires_in = 3;
+  UserInfo user = 4;
+}
+
+message UserInfo {
+  string id = 1;
+  string email = 2;
+  string role = 3;
+}
+
+// ── Chat Service ──
+
+service ChatService {
+  // Unary chat (request → single response)
+  rpc SendMessage(SendMessageRequest) returns (SendMessageResponse);
+  // Server-streaming chat (request → stream of chunks)
+  rpc StreamMessage(StreamMessageRequest) returns (stream StreamMessageChunk);
+}
+
+message SendMessageRequest {
+  string session_id = 1;
+  string npc_id = 2;
+  string message = 3;
+  optional bool use_rag = 4;
+}
+
+message SendMessageResponse {
+  string npc_id = 1;
+  string assistant_message = 2;
+  optional string hint = 3;
+  repeated string safety_flags = 4;
+}
+
+message StreamMessageRequest {
+  string session_id = 1;
+  string npc_id = 2;
+  string message = 3;
+  optional bool use_rag = 4;
+}
+
+message StreamMessageChunk {
+  string text = 1;
+}
+
+// ── Session Service ──
+
+service SessionService {
+  rpc ListUserSessions(ListUserSessionsRequest) returns (ListUserSessionsResponse);
+  rpc GetSession(GetSessionRequest) returns (SessionDetail);
+  rpc DeleteSession(DeleteSessionRequest) returns (DeleteSessionResponse);
+}
+
+message ListUserSessionsRequest {
+  string user_id = 1;
+}
+
+message ListUserSessionsResponse {
+  repeated SessionSummary sessions = 1;
+}
+
+message SessionSummary {
+  string id = 1;
+  string npc_name = 2;
+  string status = 3;
+  string started_at = 4;
+}
+
+message GetSessionRequest {
+  string session_id = 1;
+}
+
+message SessionDetail {
+  string id = 1;
+  string user_id = 2;
+  NpcInfo npc = 3;
+  optional ScenarioInfo scenario = 4;
+  string status = 5;
+  optional string started_at = 6;
+  optional string ended_at = 7;
+  repeated TurnInfo turns = 8;
+}
+
+message NpcInfo {
+  string name = 1;
+  string role_title = 2;
+}
+
+message ScenarioInfo {
+  string id = 1;
+  string title = 2;
+  string description = 3;
+  int32 difficulty_level = 4;
+}
+
+message TurnInfo {
+  string id = 1;
+  int32 turn_number = 2;
+  string speaker = 3;
+  string content = 4;
+  optional string created_at = 5;
+}
+
+message DeleteSessionRequest {
+  string session_id = 1;
+}
+
+message DeleteSessionResponse {
+  bool deleted = 1;
+  string id = 2;
+}
