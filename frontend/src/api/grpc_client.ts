@@ -48,12 +48,14 @@ export async function sendMessageStream(
     req: ChatRequest,
     onChunk: (text: string) => void,
 ): Promise<void> {
+    const authHeaders = await getAuthHeaders();
+
     const doFetch = async () => {
         return fetch(`/rpc/chat/${req.npcId}/stream`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                ...getAuthHeaders(),
+                ...authHeaders,
             },
             body: JSON.stringify({
                 sessionId: req.sessionId,
@@ -63,14 +65,7 @@ export async function sendMessageStream(
         });
     };
 
-    let res = await doFetch();
-
-    // Retry on 401: re-authenticate and try once more
-    if (res.status === 401) {
-        const { login } = await import('./auth');
-        await login('admin@test.com', 'Admin@123');
-        res = await doFetch();
-    }
+    const res = await doFetch();
 
     if (!res.ok) {
         throw new Error(`gRPC stream request failed: ${res.status} ${res.statusText}`);
@@ -101,11 +96,12 @@ export async function sendMessageStream(
  *       → gRPC ChatService.SendMessage on port 50051
  */
 export async function sendMessageGrpc(req: ChatRequest): Promise<ChatResponse> {
+    const authHeaders = await getAuthHeaders();
     const res = await fetch(`/rpc/chat/${req.npcId}/send`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            ...getAuthHeaders(),
+            ...authHeaders,
         },
         body: JSON.stringify({
             sessionId: req.sessionId,

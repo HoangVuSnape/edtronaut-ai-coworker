@@ -306,13 +306,16 @@ class PostgresConversationStore:
         await asyncio.to_thread(_upgrade_or_stamp, table_names)
         logger.info("Alembic migrations applied to head")
 
-    async def create_user(self, *, email: str, password_hash: str, role: str = "user") -> dict[str, Any]:
+    async def create_user(self, *, email: str, password_hash: str, role: str = "user", id: str | None = None) -> dict[str, Any]:
         """Create a user row and return a serialized representation."""
-        user = UserRow(
-            email=email.strip().lower(),
-            password_hash=password_hash,
-            role=role,
-        )
+        kwargs = {
+            "email": email.strip().lower(),
+            "password_hash": password_hash,
+            "role": role,
+        }
+        if id:
+            kwargs["id"] = self._to_uuid(id)
+        user = UserRow(**kwargs)
         async with self._session_factory() as session:
             async with session.begin():
                 session.add(user)

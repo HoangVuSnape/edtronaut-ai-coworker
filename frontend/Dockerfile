@@ -16,6 +16,13 @@ RUN npm ci
 
 # Copy source and build
 COPY . .
+
+# Accept Supabase env vars at build time (Vite inlines VITE_ vars)
+ARG VITE_SUPABASE_URL
+ARG VITE_SUPABASE_ANON_KEY
+ENV VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
+ENV VITE_SUPABASE_ANON_KEY=${VITE_SUPABASE_ANON_KEY}
+
 RUN npm run build
 
 # ── Stage 2: Serve ──
