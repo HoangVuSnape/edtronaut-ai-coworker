@@ -542,7 +542,7 @@ requires-dist = [
     { name = "python-jose", extras = ["cryptography"], specifier = ">=3.3.0" },
     { name = "python-json-logger", specifier = ">=2.0.0" },
     { name = "pyyaml", specifier = ">=6.0.1" },
-    { name = "qdrant-client", specifier = ">=1.7.0" },
+    { name = "qdrant-client", extras = ["grpc"], specifier = ">=1.7.0" },
     { name = "redis", specifier = ">=5.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4.0" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.0" },

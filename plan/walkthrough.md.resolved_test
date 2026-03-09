@@ -1,0 +1,31 @@
+# Walkthrough: Unit Test Coverage Enhancement
+
+## Summary
+
+Bổ sung **11 test files mới** để đạt coverage toàn diện cho tất cả source modules trong backend. Tổng số test tăng từ ~20 lên **126 tests**, tất cả đều pass.
+
+## New Test Files Created
+
+| File | Module Tested | Tests |
+|------|--------------|-------|
+| [test_helpers.py](file:///e:/DoCode/Pr_withAN/edtronaut-ai-coworker/backend/tests/test_helpers.py) | [utils/helpers.py](file:///e:/DoCode/Pr_withAN/edtronaut-ai-coworker/backend/src/coworker_api/utils/helpers.py) | 7 |
+| [test_tools.py](file:///e:/DoCode/Pr_withAN/edtronaut-ai-coworker/backend/tests/test_tools.py) | ABSimulator + PortfolioPack | 9 |
+| [test_provider_factory.py](file:///e:/DoCode/Pr_withAN/edtronaut-ai-coworker/backend/tests/test_provider_factory.py) | LLM/Embedding factory | 9 |
+| [test_session_manager_full.py](file:///e:/DoCode/Pr_withAN/edtronaut-ai-coworker/backend/tests/test_session_manager_full.py) | SessionManager (full) | 8 |
+| [test_director_service.py](file:///e:/DoCode/Pr_withAN/edtronaut-ai-coworker/backend/tests/test_director_service.py) | DirectorService | 5 |
+| [test_evaluation_service.py](file:///e:/DoCode/Pr_withAN/edtronaut-ai-coworker/backend/tests/test_evaluation_service.py) | EvaluationService | 4 |
+| [test_ingest_documents_service.py](file:///e:/DoCode/Pr_withAN/edtronaut-ai-coworker/backend/tests/test_ingest_documents_service.py) | IngestDocumentsService | 9 |
+| [test_reset_memory_service.py](file:///e:/DoCode/Pr_withAN/edtronaut-ai-coworker/backend/tests/test_reset_memory_service.py) | ResetMemoryService | 5 |
+| [test_composite_store.py](file:///e:/DoCode/Pr_withAN/edtronaut-ai-coworker/backend/tests/test_composite_store.py) | CompositeMemoryStore | 9 |
+| [test_retriever.py](file:///e:/DoCode/Pr_withAN/edtronaut-ai-coworker/backend/tests/test_retriever.py) | QdrantRetriever | 6 |
+| [test_chat_service.py](file:///e:/DoCode/Pr_withAN/edtronaut-ai-coworker/backend/tests/test_chat_service.py) | ChatService | 9 |
+
+## Verification
+
+```
+============================= test session starts =============================
+126 passed in 40.80s
+=============================  all passed  ====================================
+```
+
+All tests use `unittest.mock` (AsyncMock/MagicMock) — no external services (LLM, Redis, Postgres, Qdrant) needed.

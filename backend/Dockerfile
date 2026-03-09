@@ -19,6 +19,21 @@ COPY pyproject.toml uv.lock* README.md ./
 RUN uv sync --frozen --no-dev --no-editable 2>/dev/null \
     || uv sync --no-dev --no-editable
 
+# Copy source and protos for stub generation
+COPY src/ ./src/
+COPY protos/ ./protos/
+
+# Compile proto files → Python gRPC stubs
+RUN mkdir -p src/coworker_api/generated \
+    && .venv/bin/python -m grpc_tools.protoc \
+    --proto_path=protos \
+    --python_out=src/coworker_api/generated \
+    --grpc_python_out=src/coworker_api/generated \
+    --pyi_out=src/coworker_api/generated \
+    protos/coworker.proto \
+    && echo '"""Generated gRPC/Protobuf stubs."""' > src/coworker_api/generated/__init__.py \
+    && sed -i 's/^import coworker_pb2/from . import coworker_pb2/' src/coworker_api/generated/coworker_pb2_grpc.py
+
 # ── Stage 2: Runtime ──
 FROM python:3.13-slim
 
@@ -30,8 +45,8 @@ WORKDIR /app
 # Copy the virtual env from builder
 COPY --from=builder /app/.venv /app/.venv
 
-# Copy application source and configs
-COPY src/ ./src/
+# Copy application source (with generated stubs from builder) and configs
+COPY --from=builder /app/src/ ./src/
 COPY configs/ ./configs/
 COPY alembic.ini ./alembic.ini
 COPY migrations/ ./migrations/

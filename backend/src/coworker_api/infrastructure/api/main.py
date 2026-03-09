@@ -38,6 +38,9 @@ class AppContainer:
         self.vector_store = None
         self.retriever = None
 
+        # gRPC server instance
+        self.grpc_server = None
+
         # Application services (lazy)
         self.session_manager = None
         self.chat_service = None
@@ -139,6 +142,13 @@ class AppContainer:
 
     async def shutdown(self) -> None:
         """Cleanup resources."""
+        if self.grpc_server:
+            from coworker_api.infrastructure.api.grpc_server import stop_grpc_server
+            await stop_grpc_server(self.grpc_server)
+            self.grpc_server = None
+        # Close gRPC-Web gateway channel
+        from coworker_api.infrastructure.api.grpc_web_gateway import close_channel
+        await close_channel()
         if self.memory_store:
             await self.memory_store.close()
         if self.vector_store:
@@ -159,6 +169,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     setup_logging()
     logger.info("Starting Edtronaut AI Coworker backend...")
     await container.initialize()
+
+    # Start gRPC server alongside FastAPI
+    from coworker_api.infrastructure.api.grpc_server import start_grpc_server
+    container.grpc_server = await start_grpc_server(container)
+
     yield
     logger.info("Shutting down...")
     await container.shutdown()
@@ -175,9 +190,13 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # Register REST routes
+    # Register REST routes (kept in parallel for health checks, legacy)
     from coworker_api.infrastructure.api.rest_routes import router
     app.include_router(router)
+
+    # Register gRPC-Web gateway routes (primary transport)
+    from coworker_api.infrastructure.api.grpc_web_gateway import router as grpc_gw_router
+    app.include_router(grpc_gw_router)
 
     return app
 

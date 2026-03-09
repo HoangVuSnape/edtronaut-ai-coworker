@@ -1,0 +1,133 @@
+# Unit Test Coverage Enhancement — Backend
+
+Bổ sung unit tests cho các module chưa có hoặc chưa đủ test coverage. Tất cả tests sử dụng `unittest.mock` (AsyncMock/MagicMock) để mock external services, không cần kết nối thật.
+
+## Current Coverage Summary
+
+| Module | Existing Tests | Status |
+|--------|---------------|--------|
+| [domain/models.py](file:///e:/DoCode/Pr_withAN/edtronaut-ai-coworker/backend/src/coworker_api/domain/models.py) | NPC, Conversation, Hint | ✅ Covered |
+| [domain/exceptions.py](file:///e:/DoCode/Pr_withAN/edtronaut-ai-coworker/backend/src/coworker_api/domain/exceptions.py) | gRPC codes, messages | ✅ Covered |
+| [domain/memory/schemas.py](file:///e:/DoCode/Pr_withAN/edtronaut-ai-coworker/backend/src/coworker_api/domain/memory/schemas.py) | MemoryState add/truncation | ✅ Covered |
+| `domain/prompts/` | get_persona, list_personas | ✅ Covered |
+| `infrastructure/nlp/intent_detector.py` | Question/Greeting/Unknown | ✅ Covered |
+| `infrastructure/nlp/text_processor.py` | clean_text, chunk | ✅ Covered |
+| [infrastructure/tools/kpi_calculator.py](file:///e:/DoCode/Pr_withAN/edtronaut-ai-coworker/backend/src/coworker_api/infrastructure/tools/kpi_calculator.py) | revenue_growth, unknown KPI | ✅ Covered |
+| [infrastructure/api/rest_routes.py](file:///e:/DoCode/Pr_withAN/edtronaut-ai-coworker/backend/src/coworker_api/infrastructure/api/rest_routes.py) | Auth, RBAC, chat, sessions (10 tests) | ✅ Covered |
+| [application/session_manager.py](file:///e:/DoCode/Pr_withAN/edtronaut-ai-coworker/backend/src/coworker_api/application/session_manager.py) | Create only (2 tests) | ⚠️ Partial |
+| [infrastructure/rag/vector_store.py](file:///e:/DoCode/Pr_withAN/edtronaut-ai-coworker/backend/src/coworker_api/infrastructure/rag/vector_store.py) | Search, ensure_collection (3 tests) | ✅ Covered |
+| **application/chat_service.py** | None | ❌ Missing |
+| **application/director_service.py** | None | ❌ Missing |
+| **application/evaluation_service.py** | None | ❌ Missing |
+| **application/ingest_documents_service.py** | None | ❌ Missing |
+| **application/reset_memory_service.py** | None | ❌ Missing |
+| **infrastructure/db/composite_store.py** | None | ❌ Missing |
+| **infrastructure/rag/retriever.py** | None | ❌ Missing |
+| **infrastructure/tools/ab_simulator.py** | None | ❌ Missing |
+| **infrastructure/tools/portfolio_pack.py** | None | ❌ Missing |
+| **infrastructure/llm_providers/provider_factory.py** | None | ❌ Missing |
+| **utils/helpers.py** | None | ❌ Missing |
+
+## Proposed Changes
+
+All new test files go in `backend/tests/`. Each uses mocked ports (AsyncMock) — no real DB/Redis/LLM needed.
+
+---
+
+### Application Layer
+
+#### [NEW] [test_session_manager_full.py](file:///e:/DoCode/Pr_withAN/edtronaut-ai-coworker/backend/tests/test_session_manager_full.py)
+Complete `SessionManager` coverage beyond existing create tests:
+- `load_session` — success returns Conversation, not-found raises `ConversationNotFoundError`
+- `save_session` — delegates to memory port
+- `delete_session` — returns True/False
+- `list_user_sessions` — returns list from memory port
+- `add_turn_to_session` — loads, adds turn, saves, returns updated Conversation
+
+#### [NEW] [test_chat_service.py](file:///e:/DoCode/Pr_withAN/edtronaut-ai-coworker/backend/tests/test_chat_service.py)
+- `process_message` without RAG — verifies LLM called, turn saved, response returned
+- `process_message` with RAG — verifies retriever called, context injected
+- `_build_prompt` — correct prompt assembly with/without context
+- `_retrieve_context_with_docs` — handles empty results, maps metadata
+
+#### [NEW] [test_director_service.py](file:///e:/DoCode/Pr_withAN/edtronaut-ai-coworker/backend/tests/test_director_service.py)
+- `analyze_conversation` — LLM called with correct prompt, returns analysis dict
+- `analyze_conversation` with empty turns — returns `_empty_assessment`
+- `should_intervene` — returns None if turn_count < 2
+- `_empty_assessment` — validates structure
+
+#### [NEW] [test_evaluation_service.py](file:///e:/DoCode/Pr_withAN/edtronaut-ai-coworker/backend/tests/test_evaluation_service.py)
+- `evaluate_session` — LLM called, result dict contains expected keys
+- `evaluate_session` with 0 turns — returns `_empty_evaluation`
+- `_empty_evaluation` — validates default structure and values
+
+#### [NEW] [test_ingest_documents_service.py](file:///e:/DoCode/Pr_withAN/edtronaut-ai-coworker/backend/tests/test_ingest_documents_service.py)
+- `ingest` — normal flow with 2 docs, chunks stored via retriever
+- `ingest` with empty documents — returns `no_content`
+- `ingest` with blank content docs — skips them
+- `_chunk_text` — correct chunking with overlap, sentence-boundary breaks
+
+#### [NEW] [test_reset_memory_service.py](file:///e:/DoCode/Pr_withAN/edtronaut-ai-coworker/backend/tests/test_reset_memory_service.py)
+- `reset_session` — delegates to session_manager.delete_session, returns status
+- `reset_session` not found — returns `not_found` status
+- `reset_all_user_sessions` — iterates sessions, deletes each, returns count
+
+---
+
+### Infrastructure Layer
+
+#### [NEW] [test_composite_store.py](file:///e:/DoCode/Pr_withAN/edtronaut-ai-coworker/backend/tests/test_composite_store.py)
+- `save_conversation` — writes to both Redis and Postgres
+- `save_conversation` Postgres failure — still succeeds (Redis has data)
+- `load_conversation` — Redis hit returns immediately
+- `load_conversation` — Redis miss falls back to Postgres, re-caches
+- `load_conversation` — both miss returns None
+- `delete_conversation` — deletes from both stores
+- `list_conversations` — reads from Postgres, falls back to Redis on error
+
+#### [NEW] [test_retriever.py](file:///e:/DoCode/Pr_withAN/edtronaut-ai-coworker/backend/tests/test_retriever.py)
+- `retrieve` — embeds query then searches vector store
+- `add_documents` — embeds batch, upserts to vector store
+- `add_documents` empty list — returns 0
+
+#### [NEW] [test_tools.py](file:///e:/DoCode/Pr_withAN/edtronaut-ai-coworker/backend/tests/test_tools.py)
+**ABSimulator:**
+- `simulate` — returns correct structure (variant_a, variant_b, winner, recommendation)
+- `simulate` with identical rates — no significant difference
+
+**PortfolioPack:**
+- `analyze` — multi-asset portfolio returns weighted metrics
+- `analyze` empty portfolio — returns error
+- `analyze` zero-value portfolio — returns error
+
+#### [NEW] [test_provider_factory.py](file:///e:/DoCode/Pr_withAN/edtronaut-ai-coworker/backend/tests/test_provider_factory.py)
+- `create_llm_client` — returns `OpenAIClient` with correct config
+- `create_llm_client` unknown provider — raises `ValueError`
+- `create_embedding_client` — returns `OpenAIEmbeddingClient`
+- `create_embedding_client` DeepSeek — falls back to Gemini for embeddings
+
+---
+
+### Utils
+
+#### [NEW] [test_helpers.py](file:///e:/DoCode/Pr_withAN/edtronaut-ai-coworker/backend/tests/test_helpers.py)
+- `generate_id` — returns valid UUID4 string
+- `utc_now` — returns timezone-aware datetime in UTC
+- `truncate_text` — truncates long text with suffix, leaves short text unchanged
+
+## Verification Plan
+
+### Automated Tests
+
+Run the full test suite from the `backend/` directory:
+
+```bash
+cd e:/DoCode/Pr_withAN/edtronaut-ai-coworker/backend
+# Using uv (project uses uv.lock)
+uv run pytest tests/ -v --tb=short
+
+# Or if pytest is on virtual env PATH:
+.venv/Scripts/python -m pytest tests/ -v --tb=short
+```
+
+All tests should pass with 0 failures. Total expected test count: ~50+ tests (existing ~20 + ~30 new).
