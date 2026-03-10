@@ -29,7 +29,7 @@ from coworker_api.domain.models import (
     SimulationStatus,
     Turn,
 )
-from passlib.context import CryptContext
+from coworker_api.infrastructure.auth.password import pwd_context
 from coworker_api.infrastructure.db.postgres_models import (
     Base,
     ConversationRow,
@@ -40,9 +40,6 @@ from coworker_api.infrastructure.db.postgres_models import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Use the same hashing context as rest_routes for consistency
-pwd_context = CryptContext(schemes=["pbkdf2_sha256", "bcrypt"], deprecated="auto")
 
 
 class PostgresConversationStore:

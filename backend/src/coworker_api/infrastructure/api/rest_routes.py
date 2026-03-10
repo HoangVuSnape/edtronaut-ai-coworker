@@ -6,26 +6,22 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Security, status
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError, jwt
-from passlib.context import CryptContext
+from jose import jwt
 from pydantic import BaseModel, Field
 
 from coworker_api.config import get_settings
+from coworker_api.domain.constants import NPC_ROLES
 from coworker_api.domain.prompts import list_personas
+from coworker_api.infrastructure.auth.jwt_auth import decode_jwt
+from coworker_api.infrastructure.auth.password import pwd_context
 
 logger = logging.getLogger(__name__)
-
-_JWKS_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
-_JWKS_TTL_SECONDS = 3600
 
 system_router = APIRouter(tags=["system"])
 auth_router = APIRouter(tags=["auth"])
@@ -35,17 +31,7 @@ scenarios_router = APIRouter(tags=["scenarios"])
 sessions_router = APIRouter(tags=["sessions"])
 chat_router = APIRouter(tags=["chat"])
 router = APIRouter()
-# Use pbkdf2_sha256 for stable cross-platform hashing; keep bcrypt for backward verify.
-pwd_context = CryptContext(schemes=["pbkdf2_sha256", "bcrypt"], deprecated="auto")
 bearer_scheme = HTTPBearer(auto_error=False)
-
-
-# Chat persona display mapping (matches frontend NPC_META)
-NPC_ROLES: dict[str, str] = {
-    "gucci_ceo": "Chief Executive Officer, Gucci",
-    "gucci_chro": "Chief Human Resources Officer, Gucci",
-    "gucci_eb_ic": "Investment Banker & Individual Contributor, Gucci Group Finance",
-}
 
 
 class ChatRequestBody(BaseModel):
@@ -182,206 +168,17 @@ def _create_access_token(payload: dict[str, Any], expires_minutes: int) -> tuple
     return token, expires_in
 
 
+
 def _decode_access_token(token: str) -> dict[str, Any]:
-    settings = get_settings()
-    allowed_algorithms = _get_allowed_jwt_algorithms(settings)
-    header_alg = _get_token_alg(token)
-
-    # Supabase JWT verification path
-    supabase_secret = settings.auth.supabase_jwt_secret.strip()
-    if supabase_secret:
-        try:
-            if header_alg and header_alg not in allowed_algorithms:
-                if header_alg.startswith(("RS", "ES")):
-                    jwks_urls = _get_supabase_jwks_urls(token)
-                    jwk_key = _get_jwks_key(jwks_urls, token)
-                    payload = jwt.decode(
-                        token,
-                        jwk_key,
-                        algorithms=[header_alg],
-                        audience="authenticated",
-                    )
-                else:
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail=f"Invalid or expired token: alg not allowed: {header_alg}",
-                        headers={"WWW-Authenticate": "Bearer"},
-                    )
-            elif header_alg and header_alg.startswith(("RS", "ES")):
-                jwks_urls = _get_supabase_jwks_urls(token)
-                jwk_key = _get_jwks_key(jwks_urls, token)
-                payload = jwt.decode(
-                    token,
-                    jwk_key,
-                    algorithms=[header_alg],
-                    audience="authenticated",
-                )
-            else:
-                payload = jwt.decode(
-                    token,
-                    supabase_secret,
-                    algorithms=allowed_algorithms,
-                    audience="authenticated",
-                )
-        except JWTError:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid or expired token",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-
-        if not payload.get("sub"):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token payload",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-
-        # Extract role from app_metadata (set via Supabase Dashboard or SQL)
-        app_metadata = payload.get("app_metadata", {})
-        role = app_metadata.get("role", "user") if isinstance(app_metadata, dict) else "user"
-        payload["role"] = role
-        # Ensure email is present
-        if not payload.get("email"):
-            payload["email"] = payload.get("email", "")
-        return payload
-
-    # Legacy self-issued JWT path
-    secret = settings.auth.jwt_secret_key.strip()
-    if not secret or secret == "CHANGE_ME_IN_PRODUCTION":
-        logger.error("JWT secret key is not configured")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Authentication is not configured",
-        )
-
+    """Decode a JWT token, converting ValueError to HTTPException."""
     try:
-        payload = jwt.decode(
-            token,
-            secret,
-            algorithms=allowed_algorithms,
-        )
-    except JWTError:
+        return decode_jwt(token)
+    except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
+            detail=str(e),
             headers={"WWW-Authenticate": "Bearer"},
         )
-
-    if not payload.get("sub"):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token payload",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    return payload
-
-
-def _get_allowed_jwt_algorithms(settings) -> list[str]:
-    raw = settings.auth.jwt_algorithm or ""
-    parts = [part.strip().upper() for part in raw.split(",")]
-    allowed = [part for part in parts if part]
-    return allowed or ["HS256"]
-
-
-def _get_token_alg(token: str) -> str:
-    try:
-        header = jwt.get_unverified_header(token)
-    except Exception:
-        return ""
-    alg = str(header.get("alg", "")).upper()
-    return alg
-
-
-def _get_supabase_jwks_urls(token: str) -> list[str]:
-    try:
-        claims = jwt.get_unverified_claims(token)
-    except Exception:
-        claims = {}
-
-    iss = str(claims.get("iss", "")).rstrip("/")
-    supabase_url = os.getenv("SUPABASE_URL") or os.getenv("VITE_SUPABASE_URL") or ""
-    supabase_url = supabase_url.rstrip("/")
-
-    base_url = ""
-    if iss:
-        if iss.endswith("/auth/v1"):
-            base_url = iss[: -len("/auth/v1")]
-        else:
-            base_url = iss
-    elif supabase_url:
-        base_url = supabase_url
-
-    if not base_url:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Supabase URL is not configured for JWKS lookup",
-        )
-
-    return [
-        f"{base_url}/auth/v1/keys",
-        f"{base_url}/auth/v1/.well-known/jwks.json",
-        f"{base_url}/.well-known/jwks.json",
-    ]
-
-
-def _get_jwks_key(jwks_urls: list[str], token: str) -> dict[str, Any]:
-    header = jwt.get_unverified_header(token)
-    kid = header.get("kid")
-    jwks = _fetch_jwks_any(jwks_urls)
-    keys = jwks.get("keys", []) if isinstance(jwks, dict) else []
-    if kid:
-        for key in keys:
-            if key.get("kid") == kid:
-                return key
-    if keys:
-        return keys[0]
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="No JWKS keys available for token verification",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-
-
-def _fetch_jwks_any(jwks_urls: list[str]) -> dict[str, Any]:
-    last_error: Exception | None = None
-    for jwks_url in jwks_urls:
-        try:
-            return _fetch_jwks(jwks_url)
-        except Exception as exc:
-            last_error = exc
-            continue
-    if last_error is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Failed to fetch JWKS: no URLs provided",
-        )
-    raise last_error
-
-
-def _fetch_jwks(jwks_url: str) -> dict[str, Any]:
-    now = time.time()
-    cached = _JWKS_CACHE.get(jwks_url)
-    if cached and now - cached[0] < _JWKS_TTL_SECONDS:
-        return cached[1]
-
-    headers: dict[str, str] = {}
-    supabase_anon_key = os.getenv("SUPABASE_ANON_KEY") or os.getenv("VITE_SUPABASE_ANON_KEY") or ""
-    if supabase_anon_key:
-        headers["apikey"] = supabase_anon_key
-
-    try:
-        resp = httpx.get(jwks_url, headers=headers, timeout=5.0)
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Failed to fetch JWKS for token verification",
-        )
-
-    _JWKS_CACHE[jwks_url] = (now, data)
-    return data
 
 
 def require_authenticated(
@@ -793,6 +590,48 @@ async def delete_session(
     return {"deleted": True, "id": session_id}
 
 
+async def _ensure_chat_session(
+    container,
+    session_id: str,
+    npc_id: str,
+    user_claims: dict[str, Any],
+) -> None:
+    """Load an existing session (with access check) or auto-create a new one."""
+    from coworker_api.domain.exceptions import ConversationNotFoundError
+    from coworker_api.domain.models import Conversation, NPC
+
+    try:
+        existing = await container.session_manager.load_session(session_id)
+        if not _is_admin(user_claims) and str(existing.user_id) != str(user_claims.get("sub")):
+            raise HTTPException(status_code=403, detail="Forbidden")
+    except ConversationNotFoundError:
+        user_id = str(user_claims.get("sub"))
+        if get_settings().auth.supabase_jwt_secret:
+            store = _get_postgres_store()
+            if not await store.get_user(user_id):
+                try:
+                    await store.create_user(
+                        id=user_id,
+                        email=user_claims.get("email", ""),
+                        password_hash="supabase-oauth-no-password",
+                        role=user_claims.get("role", "user"),
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to auto-create user from Supabase: {e}")
+
+        npc = NPC(name=npc_id, role_title=NPC_ROLES[npc_id])
+        conv = Conversation(
+            id=session_id,
+            user_id=user_id,
+            npc=npc,
+        )
+        await container.session_manager.save_session(conv)
+        logger.info(
+            "Auto-created session",
+            extra={"session_id": session_id, "npc": npc_id},
+        )
+
+
 # Chat action endpoint (append to conversation)
 @chat_router.post("/api/npc/{npc_id}/chat/stream")
 async def chat_with_npc_stream(
@@ -803,8 +642,6 @@ async def chat_with_npc_stream(
     """
     Streaming chat endpoint.
     """
-    from coworker_api.domain.exceptions import ConversationNotFoundError
-    from coworker_api.domain.models import Conversation, NPC
 
     container = _get_container()
     if not container.chat_service:
@@ -818,32 +655,7 @@ async def chat_with_npc_stream(
 
     # Ensure session exists or create it
     try:
-        try:
-            existing = await container.session_manager.load_session(body.sessionId)
-            if not _is_admin(user_claims) and str(existing.user_id) != str(user_claims.get("sub")):
-                raise HTTPException(status_code=403, detail="Forbidden")
-        except ConversationNotFoundError:
-            user_id = str(user_claims.get("sub"))
-            if get_settings().auth.supabase_jwt_secret:
-                store = _get_postgres_store()
-                if not await store.get_user(user_id):
-                    try:
-                        await store.create_user(
-                            id=user_id,
-                            email=user_claims.get("email", ""),
-                            password_hash="supabase-oauth-no-password",
-                            role=user_claims.get("role", "user")
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to auto-create user from Supabase: {e}")
-
-            npc = NPC(name=npc_id, role_title=NPC_ROLES[npc_id])
-            conv = Conversation(
-                id=body.sessionId,
-                user_id=user_id,
-                npc=npc,
-            )
-            await container.session_manager.save_session(conv)
+        await _ensure_chat_session(container, body.sessionId, npc_id, user_claims)
 
         async def _stream_generator():
             async for chunk in container.chat_service.stream_message(
@@ -875,8 +687,6 @@ async def chat_with_npc(
     This is intentionally command-style, not CRUD:
     POST /api/npc/{npcId}/chat { sessionId, message }
     """
-    from coworker_api.domain.exceptions import ConversationNotFoundError
-    from coworker_api.domain.models import Conversation, NPC
 
     container = _get_container()
     if not container.chat_service:
@@ -889,36 +699,7 @@ async def chat_with_npc(
         )
 
     try:
-        try:
-            existing = await container.session_manager.load_session(body.sessionId)
-            if not _is_admin(user_claims) and str(existing.user_id) != str(user_claims.get("sub")):
-                raise HTTPException(status_code=403, detail="Forbidden")
-        except ConversationNotFoundError:
-            user_id = str(user_claims.get("sub"))
-            if get_settings().auth.supabase_jwt_secret:
-                store = _get_postgres_store()
-                if not await store.get_user(user_id):
-                    try:
-                        await store.create_user(
-                            id=user_id,
-                            email=user_claims.get("email", ""),
-                            password_hash="supabase-oauth-no-password",
-                            role=user_claims.get("role", "user")
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to auto-create user from Supabase: {e}")
-
-            npc = NPC(name=npc_id, role_title=NPC_ROLES[npc_id])
-            conv = Conversation(
-                id=body.sessionId,
-                user_id=user_id,
-                npc=npc,
-            )
-            await container.session_manager.save_session(conv)
-            logger.info(
-                "Auto-created session",
-                extra={"session_id": body.sessionId, "npc": npc_id},
-            )
+        await _ensure_chat_session(container, body.sessionId, npc_id, user_claims)
 
         result = await container.chat_service.process_message(
             session_id=body.sessionId,

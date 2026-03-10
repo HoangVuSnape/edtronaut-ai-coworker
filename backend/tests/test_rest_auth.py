@@ -10,6 +10,7 @@ from jose import jwt
 from coworker_api.domain.exceptions import ConversationNotFoundError
 from coworker_api.domain.models import Conversation, NPC
 from coworker_api.infrastructure.api import rest_routes
+from coworker_api.infrastructure.auth import jwt_auth
 
 
 def _test_settings():
@@ -48,6 +49,7 @@ def _build_client(monkeypatch) -> TestClient:
     app = FastAPI()
     app.include_router(rest_routes.router)
     monkeypatch.setattr(rest_routes, "get_settings", _test_settings)
+    monkeypatch.setattr(jwt_auth, "get_settings", _test_settings)
     return TestClient(app)
 
 
@@ -424,6 +426,7 @@ def _build_supabase_client(monkeypatch) -> TestClient:
     app = FastAPI()
     app.include_router(rest_routes.router)
     monkeypatch.setattr(rest_routes, "get_settings", _supabase_settings)
+    monkeypatch.setattr(jwt_auth, "get_settings", _supabase_settings)
     return TestClient(app)
 
 
