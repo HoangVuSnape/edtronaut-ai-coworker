@@ -98,6 +98,7 @@ class AuthSettings(BaseModel):
     jwt_secret_key: str = "CHANGE_ME_IN_PRODUCTION"
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 15
+    supabase_jwt_secret: str = ""  # When set, verifies Supabase-issued JWTs
 
 
 class LangfuseSettings(BaseModel):

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 
-from coworker_api.domain.ports import MemoryPort
 from coworker_api.application.session_manager import SessionManager
 
 logger = logging.getLogger(__name__)

@@ -10,6 +10,7 @@ from jose import jwt
 from coworker_api.domain.exceptions import ConversationNotFoundError
 from coworker_api.domain.models import Conversation, NPC
 from coworker_api.infrastructure.api import rest_routes
+from coworker_api.infrastructure.auth import jwt_auth
 
 
 def _test_settings():
@@ -18,6 +19,7 @@ def _test_settings():
             jwt_secret_key="unit-test-secret",
             jwt_algorithm="HS256",
             access_token_expire_minutes=15,
+            supabase_jwt_secret="",
         ),
         rag=SimpleNamespace(enabled=True),
         app_name="test-app",
@@ -47,6 +49,7 @@ def _build_client(monkeypatch) -> TestClient:
     app = FastAPI()
     app.include_router(rest_routes.router)
     monkeypatch.setattr(rest_routes, "get_settings", _test_settings)
+    monkeypatch.setattr(jwt_auth, "get_settings", _test_settings)
     return TestClient(app)
 
 
@@ -372,3 +375,104 @@ def test_chat_request_can_override_rag(monkeypatch):
 
     assert response.status_code == 200
     assert fake_chat.last_use_rag is False
+
+
+# ── Supabase JWT verification tests ──────────────────────────────────
+
+def _supabase_settings():
+    return SimpleNamespace(
+        auth=SimpleNamespace(
+            jwt_secret_key="unit-test-secret",
+            jwt_algorithm="HS256",
+            access_token_expire_minutes=15,
+            supabase_jwt_secret="supabase-test-secret",
+        ),
+        rag=SimpleNamespace(enabled=True),
+        app_name="test-app",
+        app_version="0.0.1",
+        llm=SimpleNamespace(model="test-model"),
+    )
+
+
+def _make_supabase_token(
+    *,
+    sub: str = "sb-user-1",
+    email: str = "user@gmail.com",
+    role: str = "user",
+    expired: bool = False,
+) -> str:
+    settings = _supabase_settings()
+    now = datetime.now(timezone.utc)
+    if expired:
+        exp = now - timedelta(minutes=10)
+    else:
+        exp = now + timedelta(minutes=30)
+    payload = {
+        "sub": sub,
+        "email": email,
+        "aud": "authenticated",
+        "app_metadata": {"role": role},
+        "iat": int(now.timestamp()),
+        "exp": int(exp.timestamp()),
+    }
+    return jwt.encode(
+        payload,
+        settings.auth.supabase_jwt_secret,
+        algorithm=settings.auth.jwt_algorithm,
+    )
+
+
+def _build_supabase_client(monkeypatch) -> TestClient:
+    app = FastAPI()
+    app.include_router(rest_routes.router)
+    monkeypatch.setattr(rest_routes, "get_settings", _supabase_settings)
+    monkeypatch.setattr(jwt_auth, "get_settings", _supabase_settings)
+    return TestClient(app)
+
+
+def test_supabase_jwt_admin_access(monkeypatch):
+    """Supabase JWT with app_metadata.role=admin grants admin access."""
+    class FakeStore:
+        async def list_users(self):
+            return [{"id": "sb-user-1", "email": "user@gmail.com", "role": "admin"}]
+
+    monkeypatch.setattr(rest_routes, "_get_postgres_store", lambda: FakeStore())
+    client = _build_supabase_client(monkeypatch)
+
+    token = _make_supabase_token(role="admin", sub="sb-admin-1")
+    response = client.get("/api/users", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+
+
+def test_supabase_jwt_default_role_is_user(monkeypatch):
+    """Supabase JWT without role in app_metadata defaults to 'user'."""
+    settings = _supabase_settings()
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": "sb-user-2",
+        "email": "new@gmail.com",
+        "aud": "authenticated",
+        "app_metadata": {},
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(minutes=30)).timestamp()),
+    }
+    token = jwt.encode(
+        payload,
+        settings.auth.supabase_jwt_secret,
+        algorithm=settings.auth.jwt_algorithm,
+    )
+
+    client = _build_supabase_client(monkeypatch)
+    # GET /api/users requires admin, so a default "user" role should be forbidden
+    response = client.get("/api/users", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Admin role required"
+
+
+def test_supabase_jwt_expired_returns_401(monkeypatch):
+    """Expired Supabase JWT returns 401."""
+    client = _build_supabase_client(monkeypatch)
+    token = _make_supabase_token(expired=True)
+    response = client.get("/api/users", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 401
+

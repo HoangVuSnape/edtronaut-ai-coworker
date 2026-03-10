@@ -55,3 +55,6 @@ desktop.ini
 
 # ignore folder skills_vu_ai
 skills_vu_ai/
+
+credentials/
+credentials/credentail_AI_superBase.json

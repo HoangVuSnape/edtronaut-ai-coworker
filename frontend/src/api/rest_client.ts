@@ -10,11 +10,12 @@ import type { ChatRequest, ChatResponse } from './grpc_client';
  * Send a chat message via the REST API.
  */
 export async function sendMessageRest(req: ChatRequest): Promise<ChatResponse> {
+    const authHeaders = await getAuthHeaders();
     const res = await fetch(`/api/npc/${req.npcId}/chat`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            ...getAuthHeaders()
+            ...authHeaders
         },
         body: JSON.stringify({ sessionId: req.sessionId, message: req.message }),
     });

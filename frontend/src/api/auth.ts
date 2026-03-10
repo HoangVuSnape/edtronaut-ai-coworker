@@ -1,42 +1,31 @@
-// Auth token management
+// Auth token management (Supabase-based)
 // ---
-// Simple in-memory + localStorage token store for the frontend.
-// Token is obtained from the login API and stored here.
+// Provides helpers for getting the current Supabase JWT access token
+// and auth headers for API calls to the backend.
 
-const TOKEN_KEY = 'edtronaut_access_token';
+import { supabase } from '../lib/supabaseClient';
 
-export function getToken(): string | null {
-    return localStorage.getItem(TOKEN_KEY);
+/**
+ * Get the current access token from Supabase session.
+ * Returns null if not authenticated.
+ */
+export async function getToken(): Promise<string | null> {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token ?? null;
 }
 
-export function setToken(token: string): void {
-    localStorage.setItem(TOKEN_KEY, token);
-}
-
-export function clearToken(): void {
-    localStorage.removeItem(TOKEN_KEY);
-}
-
-export function getAuthHeaders(): Record<string, string> {
-    const token = getToken();
+/**
+ * Build Authorization headers using the current Supabase JWT.
+ */
+export async function getAuthHeaders(): Promise<Record<string, string>> {
+    const token = await getToken();
     if (!token) return {};
     return { Authorization: `Bearer ${token}` };
 }
 
 /**
- * Login and store the returned JWT token.
+ * Sign out the current user and clear the Supabase session.
  */
-export async function login(email: string, password: string): Promise<void> {
-    const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-    });
-
-    if (!res.ok) {
-        throw new Error(`Login failed: ${res.status}`);
-    }
-
-    const data = await res.json();
-    setToken(data.access_token);
+export async function clearToken(): Promise<void> {
+    await supabase.auth.signOut();
 }

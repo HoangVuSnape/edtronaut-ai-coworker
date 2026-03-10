@@ -12,12 +12,14 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Security, status
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError, jwt
-from passlib.context import CryptContext
+from jose import jwt
 from pydantic import BaseModel, Field
 
 from coworker_api.config import get_settings
+from coworker_api.domain.constants import NPC_ROLES
 from coworker_api.domain.prompts import list_personas
+from coworker_api.infrastructure.auth.jwt_auth import decode_jwt
+from coworker_api.infrastructure.auth.password import pwd_context
 
 logger = logging.getLogger(__name__)
 
@@ -29,17 +31,7 @@ scenarios_router = APIRouter(tags=["scenarios"])
 sessions_router = APIRouter(tags=["sessions"])
 chat_router = APIRouter(tags=["chat"])
 router = APIRouter()
-# Use pbkdf2_sha256 for stable cross-platform hashing; keep bcrypt for backward verify.
-pwd_context = CryptContext(schemes=["pbkdf2_sha256", "bcrypt"], deprecated="auto")
 bearer_scheme = HTTPBearer(auto_error=False)
-
-
-# Chat persona display mapping (matches frontend NPC_META)
-NPC_ROLES: dict[str, str] = {
-    "gucci_ceo": "Chief Executive Officer, Gucci",
-    "gucci_chro": "Chief Human Resources Officer, Gucci",
-    "gucci_eb_ic": "Investment Banker & Individual Contributor, Gucci Group Finance",
-}
 
 
 class ChatRequestBody(BaseModel):
@@ -176,36 +168,17 @@ def _create_access_token(payload: dict[str, Any], expires_minutes: int) -> tuple
     return token, expires_in
 
 
+
 def _decode_access_token(token: str) -> dict[str, Any]:
-    settings = get_settings()
-    secret = settings.auth.jwt_secret_key.strip()
-    if not secret or secret == "CHANGE_ME_IN_PRODUCTION":
-        logger.error("JWT secret key is not configured")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Authentication is not configured",
-        )
-
+    """Decode a JWT token, converting ValueError to HTTPException."""
     try:
-        payload = jwt.decode(
-            token,
-            secret,
-            algorithms=[settings.auth.jwt_algorithm],
-        )
-    except JWTError:
+        return decode_jwt(token)
+    except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
+            detail=str(e),
             headers={"WWW-Authenticate": "Bearer"},
         )
-
-    if not payload.get("sub"):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token payload",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    return payload
 
 
 def require_authenticated(
@@ -617,6 +590,48 @@ async def delete_session(
     return {"deleted": True, "id": session_id}
 
 
+async def _ensure_chat_session(
+    container,
+    session_id: str,
+    npc_id: str,
+    user_claims: dict[str, Any],
+) -> None:
+    """Load an existing session (with access check) or auto-create a new one."""
+    from coworker_api.domain.exceptions import ConversationNotFoundError
+    from coworker_api.domain.models import Conversation, NPC
+
+    try:
+        existing = await container.session_manager.load_session(session_id)
+        if not _is_admin(user_claims) and str(existing.user_id) != str(user_claims.get("sub")):
+            raise HTTPException(status_code=403, detail="Forbidden")
+    except ConversationNotFoundError:
+        user_id = str(user_claims.get("sub"))
+        if get_settings().auth.supabase_jwt_secret:
+            store = _get_postgres_store()
+            if not await store.get_user(user_id):
+                try:
+                    await store.create_user(
+                        id=user_id,
+                        email=user_claims.get("email", ""),
+                        password_hash="supabase-oauth-no-password",
+                        role=user_claims.get("role", "user"),
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to auto-create user from Supabase: {e}")
+
+        npc = NPC(name=npc_id, role_title=NPC_ROLES[npc_id])
+        conv = Conversation(
+            id=session_id,
+            user_id=user_id,
+            npc=npc,
+        )
+        await container.session_manager.save_session(conv)
+        logger.info(
+            "Auto-created session",
+            extra={"session_id": session_id, "npc": npc_id},
+        )
+
+
 # Chat action endpoint (append to conversation)
 @chat_router.post("/api/npc/{npc_id}/chat/stream")
 async def chat_with_npc_stream(
@@ -627,8 +642,6 @@ async def chat_with_npc_stream(
     """
     Streaming chat endpoint.
     """
-    from coworker_api.domain.exceptions import ConversationNotFoundError
-    from coworker_api.domain.models import Conversation, NPC
 
     container = _get_container()
     if not container.chat_service:
@@ -642,18 +655,7 @@ async def chat_with_npc_stream(
 
     # Ensure session exists or create it
     try:
-        try:
-            existing = await container.session_manager.load_session(body.sessionId)
-            if not _is_admin(user_claims) and str(existing.user_id) != str(user_claims.get("sub")):
-                raise HTTPException(status_code=403, detail="Forbidden")
-        except ConversationNotFoundError:
-            npc = NPC(name=npc_id, role_title=NPC_ROLES[npc_id])
-            conv = Conversation(
-                id=body.sessionId,
-                user_id=str(user_claims.get("sub")),
-                npc=npc,
-            )
-            await container.session_manager.save_session(conv)
+        await _ensure_chat_session(container, body.sessionId, npc_id, user_claims)
 
         async def _stream_generator():
             async for chunk in container.chat_service.stream_message(
@@ -685,8 +687,6 @@ async def chat_with_npc(
     This is intentionally command-style, not CRUD:
     POST /api/npc/{npcId}/chat { sessionId, message }
     """
-    from coworker_api.domain.exceptions import ConversationNotFoundError
-    from coworker_api.domain.models import Conversation, NPC
 
     container = _get_container()
     if not container.chat_service:
@@ -699,22 +699,7 @@ async def chat_with_npc(
         )
 
     try:
-        try:
-            existing = await container.session_manager.load_session(body.sessionId)
-            if not _is_admin(user_claims) and str(existing.user_id) != str(user_claims.get("sub")):
-                raise HTTPException(status_code=403, detail="Forbidden")
-        except ConversationNotFoundError:
-            npc = NPC(name=npc_id, role_title=NPC_ROLES[npc_id])
-            conv = Conversation(
-                id=body.sessionId,
-                user_id=str(user_claims.get("sub")),
-                npc=npc,
-            )
-            await container.session_manager.save_session(conv)
-            logger.info(
-                "Auto-created session",
-                extra={"session_id": body.sessionId, "npc": npc_id},
-            )
+        await _ensure_chat_session(container, body.sessionId, npc_id, user_claims)
 
         result = await container.chat_service.process_message(
             session_id=body.sessionId,

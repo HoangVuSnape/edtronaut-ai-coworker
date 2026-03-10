@@ -29,7 +29,7 @@ from coworker_api.domain.models import (
     SimulationStatus,
     Turn,
 )
-from passlib.context import CryptContext
+from coworker_api.infrastructure.auth.password import pwd_context
 from coworker_api.infrastructure.db.postgres_models import (
     Base,
     ConversationRow,
@@ -40,9 +40,6 @@ from coworker_api.infrastructure.db.postgres_models import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Use the same hashing context as rest_routes for consistency
-pwd_context = CryptContext(schemes=["pbkdf2_sha256", "bcrypt"], deprecated="auto")
 
 
 class PostgresConversationStore:
@@ -306,13 +303,16 @@ class PostgresConversationStore:
         await asyncio.to_thread(_upgrade_or_stamp, table_names)
         logger.info("Alembic migrations applied to head")
 
-    async def create_user(self, *, email: str, password_hash: str, role: str = "user") -> dict[str, Any]:
+    async def create_user(self, *, email: str, password_hash: str, role: str = "user", id: str | None = None) -> dict[str, Any]:
         """Create a user row and return a serialized representation."""
-        user = UserRow(
-            email=email.strip().lower(),
-            password_hash=password_hash,
-            role=role,
-        )
+        kwargs = {
+            "email": email.strip().lower(),
+            "password_hash": password_hash,
+            "role": role,
+        }
+        if id:
+            kwargs["id"] = self._to_uuid(id)
+        user = UserRow(**kwargs)
         async with self._session_factory() as session:
             async with session.begin():
                 session.add(user)

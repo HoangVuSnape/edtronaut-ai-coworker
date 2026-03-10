@@ -8,6 +8,7 @@ Uses compiled proto stubs from coworker_api.generated.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 from concurrent import futures
 from typing import Any
@@ -15,22 +16,14 @@ from typing import Any
 import grpc
 
 from coworker_api.config import get_settings
+from coworker_api.domain.constants import NPC_ROLES
 from coworker_api.generated import coworker_pb2, coworker_pb2_grpc
+from coworker_api.infrastructure.auth.jwt_auth import decode_jwt
+from coworker_api.infrastructure.auth.password import pwd_context
 
 logger = logging.getLogger(__name__)
 
-# NPC roles — mirrors REST routes NPC_ROLES
-NPC_ROLES: dict[str, str] = {
-    "gucci_ceo": "Chief Executive Officer, Gucci",
-    "gucci_chro": "Chief Human Resources Officer, Gucci",
-    "gucci_eb_ic": "Investment Banker & Individual Contributor, Gucci Group Finance",
-}
-
-
-# ── JWT Auth Interceptor ──
-
 # Context variable to pass user claims from interceptor to servicers
-import contextvars
 _user_claims_var: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar(
     "user_claims", default={}
 )
@@ -66,8 +59,9 @@ class JWTAuthInterceptor(grpc.aio.ServerInterceptor):
         token = auth_value[7:]  # strip "Bearer "
 
         try:
-            claims = _decode_jwt(token)
+            claims = decode_jwt(token)
         except Exception as e:
+            logger.error(f"JWT Verification failed in interceptor: {e}")
             return self._unauthenticated_handler(str(e))
 
         # Store claims in context variable — servicers read via _get_user_claims()
@@ -84,29 +78,6 @@ class JWTAuthInterceptor(grpc.aio.ServerInterceptor):
 
 
 
-def _decode_jwt(token: str) -> dict[str, Any]:
-    """Decode and validate a JWT token. Raises on failure."""
-    from jose import JWTError, jwt
-
-    settings = get_settings()
-    secret = settings.auth.jwt_secret_key.strip()
-
-    if not secret or secret == "CHANGE_ME_IN_PRODUCTION":
-        raise ValueError("Authentication is not configured")
-
-    try:
-        payload = jwt.decode(
-            token, secret, algorithms=[settings.auth.jwt_algorithm]
-        )
-    except JWTError as e:
-        raise ValueError(f"Invalid or expired token: {e}")
-
-    if not payload.get("sub"):
-        raise ValueError("Invalid token payload: missing sub")
-
-    return payload
-
-
 def _get_user_claims(context) -> dict[str, Any]:
     """Extract user claims from context variable (set by interceptor)."""
     return _user_claims_var.get({})
@@ -121,9 +92,8 @@ class AuthServicer(coworker_pb2_grpc.AuthServiceServicer):
         self._container = container
 
     async def Login(self, request, context):
-        from passlib.context import CryptContext
 
-        pwd_context = CryptContext(schemes=["pbkdf2_sha256", "bcrypt"], deprecated="auto")
+        # pwd_context imported from infrastructure.auth.password
         store = self._container.postgres_store
 
         if store is None:
@@ -214,20 +184,9 @@ class ChatServicer(coworker_pb2_grpc.ChatServiceServicer):
         session_id = request.session_id
 
         try:
-            try:
-                existing = await self._container.session_manager.load_session(session_id)
-                owner_id = str(existing.user_id)
-                caller_id = str(claims.get("sub", ""))
-                if claims.get("role") != "admin" and owner_id != caller_id:
-                    await context.abort(grpc.StatusCode.PERMISSION_DENIED, "Forbidden")
-            except ConversationNotFoundError:
-                npc = NPC(name=npc_id, role_title=NPC_ROLES[npc_id])
-                conv = Conversation(
-                    id=session_id,
-                    user_id=str(claims.get("sub")),
-                    npc=npc,
-                )
-                await self._container.session_manager.save_session(conv)
+            await self._ensure_session(
+                session_id, npc_id, claims, context,
+            )
 
             settings = get_settings()
             use_rag = request.use_rag if request.HasField("use_rag") else settings.rag.enabled
@@ -273,20 +232,9 @@ class ChatServicer(coworker_pb2_grpc.ChatServiceServicer):
         session_id = request.session_id
 
         try:
-            try:
-                existing = await self._container.session_manager.load_session(session_id)
-                owner_id = str(existing.user_id)
-                caller_id = str(claims.get("sub", ""))
-                if claims.get("role") != "admin" and owner_id != caller_id:
-                    await context.abort(grpc.StatusCode.PERMISSION_DENIED, "Forbidden")
-            except ConversationNotFoundError:
-                npc = NPC(name=npc_id, role_title=NPC_ROLES[npc_id])
-                conv = Conversation(
-                    id=session_id,
-                    user_id=str(claims.get("sub")),
-                    npc=npc,
-                )
-                await self._container.session_manager.save_session(conv)
+            await self._ensure_session(
+                session_id, npc_id, claims, context,
+            )
 
             settings = get_settings()
             use_rag = request.use_rag if request.HasField("use_rag") else settings.rag.enabled
@@ -309,6 +257,48 @@ class ChatServicer(coworker_pb2_grpc.ChatServiceServicer):
             await context.abort(
                 grpc.StatusCode.INTERNAL, "Failed to stream chat message"
             )
+
+    async def _ensure_session(
+        self,
+        session_id: str,
+        npc_id: str,
+        claims: dict[str, Any],
+        context,
+    ) -> None:
+        """Load an existing session (with access check) or create a new one."""
+        from coworker_api.domain.exceptions import ConversationNotFoundError
+        from coworker_api.domain.models import Conversation, NPC
+
+        try:
+            existing = await self._container.session_manager.load_session(session_id)
+            owner_id = str(existing.user_id)
+            caller_id = str(claims.get("sub", ""))
+            if claims.get("role") != "admin" and owner_id != caller_id:
+                await context.abort(grpc.StatusCode.PERMISSION_DENIED, "Forbidden")
+        except ConversationNotFoundError:
+            user_id = str(claims.get("sub"))
+
+            settings = get_settings()
+            if settings.auth.supabase_jwt_secret:
+                store = self._container.postgres_store
+                if not await store.get_user(user_id):
+                    try:
+                        await store.create_user(
+                            id=user_id,
+                            email=claims.get("email", ""),
+                            password_hash="supabase-oauth-no-password",
+                            role=claims.get("role", "user"),
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to auto-create local user: {e}")
+
+            npc = NPC(name=npc_id, role_title=NPC_ROLES[npc_id])
+            conv = Conversation(
+                id=session_id,
+                user_id=user_id,
+                npc=npc,
+            )
+            await self._container.session_manager.save_session(conv)
 
 
 # ── Session Servicer ──

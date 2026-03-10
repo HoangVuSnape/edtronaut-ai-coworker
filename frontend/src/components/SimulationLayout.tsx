@@ -7,6 +7,7 @@ import { useState, useCallback } from 'react';
 import { ChatWindow } from './ChatWindow';
 import { NpcTogglePanel } from './NpcTogglePanel';
 import { HintBanner } from './HintBanner';
+import { useAuth } from '../contexts/AuthContext';
 import { sendMessageStream } from '../api/grpc_client';
 import type { Message } from '../api/grpc_client';
 import './SimulationLayout.css';
@@ -16,6 +17,8 @@ import './SimulationLayout.css';
 /* ------------------------------------------------------------------ */
 
 export function SimulationLayout() {
+    const { user, signOut } = useAuth();
+
     /* ---------- state ---------- */
     const [sessionId] = useState(() => crypto.randomUUID());
 
@@ -131,6 +134,38 @@ export function SimulationLayout() {
                     onToggle={handleToggle}
                     onChangeActive={handleChangeActive}
                 />
+
+                {/* User profile & Sign Out */}
+                <div className="sidebar-user-profile">
+                    <div className="sidebar-user-info">
+                        {user?.user_metadata?.avatar_url ? (
+                            <img
+                                className="sidebar-user-avatar"
+                                src={user.user_metadata.avatar_url}
+                                alt="Avatar"
+                                referrerPolicy="no-referrer"
+                            />
+                        ) : (
+                            <div className="sidebar-user-avatar-placeholder">👤</div>
+                        )}
+                        <div className="sidebar-user-details">
+                            <span className="sidebar-user-name">
+                                {user?.user_metadata?.full_name || 'User'}
+                            </span>
+                            <span className="sidebar-user-email">
+                                {user?.email || ''}
+                            </span>
+                        </div>
+                    </div>
+                    <button
+                        id="sign-out-btn"
+                        className="sidebar-sign-out-btn"
+                        onClick={signOut}
+                        title="Sign out"
+                    >
+                        Sign Out
+                    </button>
+                </div>
             </aside>
 
             <main className="simulation-main">
