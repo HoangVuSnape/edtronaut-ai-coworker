@@ -1,10 +1,7 @@
-Dưới đây là file Markdown thuần kỹ thuật, viết như một dev lead mô tả frontend. Bạn có thể lưu thành `frontend/README.md` hoặc `docs/FRONTEND.md`.
-
-```markdown
 # Frontend – AI Co‑worker Simulation
 
 This frontend implements the UI layer for the **Edtronaut AI Co‑worker Engine**.  
-It provides a simulation environment where learners chat with multiple AI co‑workers (CEO, CHRO, Employer Branding & IC) and receive subtle guidance from a Director agent. [file:16]
+It provides a simulation environment where learners chat with multiple AI co‑workers (CEO, CHRO, Employer Branding & IC) and receive subtle guidance from a Director agent.
 
 ---
 
@@ -15,220 +12,82 @@ frontend/
 ├── package.json
 ├── src/
 │   ├── App.tsx                  # Root component, wires layout + providers
+│   ├── lib/
+│   │   └── supabaseClient.ts    # Supabase Client for Authentication
 │   ├── api/
 │   │   ├── grpc_client.ts       # gRPC(-web) client to backend chat service
 │   │   └── rest_client.ts       # REST fallback client (for local/dev)
 │   ├── components/
+│   │   ├── Auth/
+│   │   │   └── Login.tsx        # Authentication UI (Google OAuth)
 │   │   ├── ChatWindow.tsx       # Conversation UI (history + input box)
 │   │   ├── NpcTogglePanel.tsx   # Toggle + select active NPC (CEO/CHRO/EB&IC)
 │   │   ├── HintBanner.tsx       # Displays Director hints when user is stuck
 │   │   └── SimulationLayout.tsx # High-level layout combining all widgets
-│   └── styles/                  # Global styles / Tailwind config / CSS modules
+│   └── styles/                  # Global styles / CSS
 └── public/
     └── index.html
 ```
 
 Design goals:
-
-- Single‑page chat experience tailored to the Gucci HRM simulation, not a generic chatbot UI. [file:16]  
-- Clear separation between **transport layer** (`api/`) and **presentation components** (`components/`).  
-- Minimal but explicit structure so reviewers can understand the flow in seconds.
+- Single‑page chat experience tailored to the Gucci HRM simulation.
+- Clear separation between **transport layer** (`api/`), **domain logic/auth** (`lib/`), and **presentation components** (`components/`).
+- Secure management of external Identity Providers (Google) via Supabase.
 
 ---
 
-## 2. Data Flow
+## 2. Authentication & Data Flow
 
-### 2.1. Session & NPC selection
+### 2.1. Supabase Authentication
+We rely on **Supabase** for user lifecycle and identity management.
+- `Login.tsx` handles `supabase.auth.signInWithOAuth({ provider: 'google' })`.
+- A global `AuthProvider` wraps the application, listening to `onAuthStateChange`.
+- Once authenticated, the frontend retrieves the active `access_token` (JWT).
 
-- Each browser tab holds a `sessionId` (generated client‑side or returned by backend on first call).  
-- `NpcTogglePanel` manages:
-  - `enabledNpcIds: string[]`
-  - `activeNpcId: "gucci_ceo" | "gucci_chro" | "gucci_eb_ic"`  
+### 2.2. API Layer Delivery
+Every request made to the Backend must carry the `access_token`. 
 
-Flow on user send:
-
-1. User types message in `ChatWindow` and hits “Send”.
-2. `ChatWindow` calls `onSend(text)` passed from `SimulationLayout`.
-3. `SimulationLayout` calls `api.sendMessage({ sessionId, npcId: activeNpcId, text })`.
-4. Backend returns:
-   - `assistantMessage`
-   - `npcId` (who responded)
-   - `hint` (optional, from Director)
-   - `safetyFlags` (optional; jailbreak/off‑topic/etc.).
-5. State is updated:
-   - New `Message` appended to `messages`.
-   - `hint` stored and passed into `HintBanner`.
-
-### 2.2. API Layer
-
-`src/api/grpc_client.ts`:
-
-- Exposes a minimal interface:
-
+When communicating over **REST**:
 ```ts
-export interface ChatRequest {
-  sessionId: string;
-  npcId: string;
-  message: string;
-}
-
-export interface ChatResponse {
-  npcId: string;
-  assistantMessage: string;
-  hint?: string;
-  safetyFlags?: string[];
-}
-
-export async function sendMessageGrpc(req: ChatRequest): Promise<ChatResponse> {
-  // gRPC-web implementation goes here
-}
-```
-
-`src/api/rest_client.ts`:
-
-- Fallback implementation hitting `POST /npc/{npcId}/chat` on the backend.
-
-```ts
-export async function sendMessageRest(req: ChatRequest): Promise<ChatResponse> {
+export async function sendMessageRest(req: ChatRequest, token: string): Promise<ChatResponse> {
   const res = await fetch(`/api/npc/${req.npcId}/chat`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}` 
+    },
     body: JSON.stringify({ sessionId: req.sessionId, message: req.message }),
   });
   return res.json();
 }
 ```
+*Note: The gRPC-web implementation follows a similar metadata injection pattern for its Bearer tokens.*
 
-A simple configuration flag in `App.tsx` can switch between gRPC and REST clients.
+### 2.3. Session & NPC Simulation Flow
+1. **User Types**: User submits a message via the `ChatWindow`.
+2. **Dispatch**: `SimulationLayout` grabs the active JWT and calls the API (either REST or gRPC).
+3. **Response**: The Backend processes the chat (verifying the JWT), traces via Langfuse, generates an AI response via RAG/LLM, and returns it.
+4. **State Update**: The chat UI updates, appending the `assistantMessage` and optionally displaying a `hint` in the `HintBanner`.
 
 ---
 
 ## 3. Core Components
 
 ### 3.1. SimulationLayout
-
-Top‑level layout component. Responsible for:
-
-- Owning session‑level state: `sessionId`, `messages`, `enabledNpcIds`, `activeNpcId`, `hint`.  
-- Passing callbacks and props down to children.
-
-```tsx
-// src/components/SimulationLayout.tsx
-import { useState } from 'react';
-import { ChatWindow } from './ChatWindow';
-import { NpcTogglePanel } from './NpcTogglePanel';
-import { HintBanner } from './HintBanner';
-import { sendMessageGrpc } from '../api/grpc_client';
-
-export function SimulationLayout() {
-  const [sessionId] = useState(() => crypto.randomUUID());
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [enabledNpcIds, setEnabledNpcIds] = useState<string[]>([
-    'gucci_ceo',
-    'gucci_chro',
-    'gucci_eb_ic',
-  ]);
-  const [activeNpcId, setActiveNpcId] = useState('gucci_chro');
-  const [hint, setHint] = useState<string | undefined>(undefined);
-
-  const handleSend = async (text: string) => {
-    const userMsg: Message = {
-      id: crypto.randomUUID(),
-      sender: 'user',
-      text,
-      timestamp: new Date().toISOString(),
-    };
-    setMessages((prev) => [...prev, userMsg]);
-
-    const res = await sendMessageGrpc({ sessionId, npcId: activeNpcId, message: text });
-
-    const npcMsg: Message = {
-      id: crypto.randomUUID(),
-      sender: 'npc',
-      npcId: res.npcId,
-      text: res.assistantMessage,
-      timestamp: new Date().toISOString(),
-    };
-    setMessages((prev) => [...prev, npcMsg]);
-    setHint(res.hint);
-  };
-
-  return (
-    <div className="simulation-layout">
-      <aside className="simulation-sidebar">
-        <NpcTogglePanel
-          enabledNpcIds={enabledNpcIds}
-          activeNpcId={activeNpcId}
-          onToggle={/* update enabledNpcIds */}
-          onChangeActive={setActiveNpcId}
-        />
-      </aside>
-      <main className="simulation-main">
-        <HintBanner hint={hint} />
-        <ChatWindow
-          messages={messages}
-          activeNpcId={activeNpcId}
-          onSend={handleSend}
-        />
-      </main>
-    </div>
-  );
-}
-```
+Top‑level layout component. Responsible for owning session‑level state (`sessionId`, `messages`, `enabledNpcIds`, `activeNpcId`, `hint`) and orchestrating communication with the backend.
 
 ### 3.2. ChatWindow
-
-- Renders full conversation history.
-- Distinguishes:
-  - user vs npc
-  - within npc: CEO vs CHRO vs EB&IC (different labels/colors).
-
-```tsx
-interface Message {
-  id: string;
-  sender: 'user' | 'npc';
-  npcId?: 'gucci_ceo' | 'gucci_chro' | 'gucci_eb_ic';
-  text: string;
-  timestamp: string;
-}
-
-interface ChatWindowProps {
-  messages: Message[];
-  activeNpcId: string;
-  onSend: (text: string) => void;
-}
-```
+Renders full conversation history. Visually distinguishes between the user and specific NPCs (CEO vs CHRO).
 
 ### 3.3. NpcTogglePanel
-
-Encodes the “AI coworkers (toggle on/off)” requirement from the assignment. [file:16]
-
-- If an NPC is disabled, it does not appear as an option for `activeNpcId`.  
-- Good UX: CHRO can be default active for the Gucci HRM simulation.
+Encodes the physical “AI coworkers (toggle on/off)” requirement. Allows users to switch between talking to the CHRO, CEO, or EB&IC. 
 
 ### 3.4. HintBanner
-
-Visualizes the Director layer without breaking immersion:
-
-- Only visible when a non‑empty `hint` is present.  
-- Text is neutral and coaching‑style (no wagering language, consistent with safety guardrails). [file:16]
+Visualizes the Director agent layer without breaking immersion. Only visible when a non‑empty `hint` is intercepted from the backend payload.
 
 ---
 
-## 4. Styling & UX Guidelines
-
-- Layout: chat should feel like a workspace tool, not a gaming UI.
-  - Left: NPC list / toggles.
-  - Center: conversation.
-  - Top of chat: `HintBanner`.
-- Accessibility:
-  - Clear labels for each NPC: “Gucci Group CEO”, “Gucci Group CHRO”, “Employer Branding & IC Manager”. [file:16]
-- Safety:
-  - If `safetyFlags` indicate off‑topic or policy violation, render a small system message explaining the simulation focus (HRM & leadership at Gucci) and gently redirect the user. [file:16]
-
----
-
-## 5. Development Commands
+## 4. Development Commands
 
 ```bash
 # Install deps
@@ -240,10 +99,6 @@ npm run dev
 
 # Build for production
 npm run build
-
-# Preview production build
-npm run preview
 ```
 
-This guide is intentionally concise and code‑oriented so reviewers can quickly understand how the UI maps to the AI Co‑worker and Director engine described in the assignment. [file:16]
-```
+*Be sure to set your Supabase `.env` variables (`VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`) locally before running the dev server.*

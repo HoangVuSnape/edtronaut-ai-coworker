@@ -38,6 +38,15 @@ File: `backend/src/coworker_api/config.py`
 - `auth.jwt_secret_key`
 - `auth.jwt_algorithm`
 - `auth.access_token_expire_minutes`
+- `auth.supabase_jwt_secret` (Used to verify external Supabase login tokens)
+
+## Supabase & External Auth
+
+The system actively supports external authentication providers like Google (Gmail) via **Supabase**. See the detailed plan in `docs/BACKEND_DOCS_V2/11_Supabase_Gmail_Login.md`.
+
+- The frontend manages the OAuth layer and passes the resulting Supabase JWT to the backend.
+- The FASTAPI backend verifies the token using the `auth.supabase_jwt_secret`.
+- If an externally authenticated user (from Supabase) is not yet in the backend PostgreSQL DB, the `_ensure_chat_session` method handles auto-creating the basic user record securely.
 
 ## Hardening ideas (not implemented)
 

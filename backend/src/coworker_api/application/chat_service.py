@@ -72,11 +72,49 @@ class ChatService:
             conversation.add_turn(speaker=Speaker.USER, content=user_message)
 
             rag_context = ""
+            rag_docs_for_trace: list[dict[str, Any]] = []
+            
             if use_rag and self._retriever:
-                rag_context, _ = await self._retrieve_context_with_docs(user_message)
+                rag_start = perf_counter()
+                rag_obs = start_rag_node(
+                    trace,
+                    query=user_message,
+                    metadata={"session_id": session_id, "persona_id": persona_id},
+                )
+                
+                rag_context, rag_docs_for_trace = await self._retrieve_context_with_docs(user_message)
+                
+                rag_duration_ms = self._duration_ms(rag_start)
+                finish_observation(
+                    rag_obs,
+                    output={"docs": rag_docs_for_trace},
+                    metadata={
+                        "duration_ms": rag_duration_ms,
+                        "doc_count": len(rag_docs_for_trace),
+                        "layer": "rag",
+                    },
+                )
+                self._log_step(
+                    "rag_retrieval",
+                    trace=trace,
+                    observation=rag_obs,
+                    session_id=session_id,
+                    persona_id=persona_id,
+                    layer="rag",
+                    duration_ms=rag_duration_ms,
+                    doc_count=len(rag_docs_for_trace),
+                )
 
             prompt = self._build_prompt(conversation, rag_context)
             system_prompt = get_persona_prompt(persona_id)
+
+            npc_start = perf_counter()
+            npc_obs = start_npc_node(
+                rag_obs or trace if 'rag_obs' in locals() else trace,
+                persona_id=persona_id,
+                prompt=prompt,
+                metadata={"session_id": session_id, "persona_id": persona_id, "streaming": True},
+            )
 
             full_response = []
             async for chunk in self._llm.generate_stream(
@@ -88,6 +126,29 @@ class ChatService:
 
             # After streaming finished, save the turn
             npc_response = "".join(full_response)
+            
+            npc_duration_ms = self._duration_ms(npc_start)
+            finish_observation(
+                npc_obs,
+                output=npc_response,
+                metadata={
+                    "duration_ms": npc_duration_ms,
+                    "prompt_length": len(prompt),
+                    "response_length": len(npc_response),
+                    "layer": "npc",
+                },
+            )
+            self._log_step(
+                "npc_response",
+                trace=trace,
+                observation=npc_obs,
+                session_id=session_id,
+                persona_id=persona_id,
+                layer="npc",
+                duration_ms=npc_duration_ms,
+                response_length=len(npc_response),
+            )
+
             npc_turn = conversation.add_turn(
                 speaker=Speaker.NPC,
                 content=npc_response,
@@ -104,6 +165,11 @@ class ChatService:
                 metadata={"status": "success"},
             )
         except Exception as e:
+            if 'npc_obs' in locals() and npc_obs:
+                finish_observation(npc_obs, output={"error": str(e)}, level="ERROR", status_message=str(e))
+            if 'rag_obs' in locals() and rag_obs:
+                finish_observation(rag_obs, output={"error": str(e)}, level="ERROR", status_message=str(e))
+                
             update_chat_trace(trace, metadata={"status": "error", "error": str(e)})
             logger.exception("Streaming error")
             yield f"Error: {str(e)}"
